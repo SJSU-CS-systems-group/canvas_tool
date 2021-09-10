@@ -5,8 +5,10 @@ from collections import defaultdict, namedtuple
 from configparser import ConfigParser
 import datetime
 import glob
+from html.parser import HTMLParser
 import os
 import re
+import string
 import sys
 import urllib
 
@@ -112,11 +114,46 @@ def get_assignment(course, title):
         sys.exit(2)
     return course.get_assignment(filtered_assignments[0]['assignment_id'])
 
-            
+
+def maybe_a_word(word):
+    if not word.isalpha():
+        return False
+
+    word = word.strip().lower()
+    vowels = [x for x in word if x in "aeiou"]
+    if not vowels:
+        return False
+
+    ratio = round(len(word)/len(vowels),1)
+    return 1.5 <= ratio <= 8.0
+
+class WordCounter(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.checked_word_count = 0
+        self.word_count = 0
+
+    def handle_data(self, data):
+        data.translate(str.maketrans('', '', string.punctuation))
+        words = re.findall(r'\w+', data)
+        self.word_count += len(words)
+        self.checked_word_count += len(set([w for w in words if maybe_a_word(w)]))
+
+
+def count_words(content):
+        wc = WordCounter()
+        wc.feed(content)
+        return wc.checked_word_count
+
+
 @canvas_tool.command()
 @click.argument('course_name', metavar='course_name')
 @click.argument('assignment_name', metavar='assignment_name')
-def grade_discussion(course_name, assignment_name):
+@click.option('--dryrun/--no-dryrun', default=True, show_default=True,
+        help="only show the grade, don't actually set it")
+@click.option('--min-words', default=5, show_default=True,
+        help="the minimum number of valid words to get credit")
+def grade_discussion(course_name, assignment_name, dryrun, min_words):
     '''
     grade a discussion assignment based on participation.
 
@@ -151,9 +188,11 @@ def grade_discussion(course_name, assignment_name):
             skipped += 1
             continue
 
-        grade = len(s.discussion_entries)
-        if (grade > 2):
-            grade = 2
+        grade = 0;
+        for entry in s.discussion_entries:
+            if 'message' in entry and count_words(entry['message']) > 5:
+                grade = min(grade+1, 2)
+
         grades[s] = grade
 
     if skipped == processed:
@@ -162,10 +201,15 @@ def grade_discussion(course_name, assignment_name):
 
     info(f"processed {processed}, skipped {skipped}.")
 
-    with click.progressbar(length=len(grades), label="updating grades", show_pos=True) as bar:
+    if dryrun:
+        info("would have posted:")
         for i in grades.items():
-            i[0].edit(submission={'posted_grade': i[1]})
-            bar.update(1)
+            info(f"    {i[0]} {i[1]}")
+    else:
+        with click.progressbar(length=len(grades), label="updating grades", show_pos=True) as bar:
+            for i in grades.items():
+                i[0].edit(submission={'posted_grade': i[1]})
+                bar.update(1)
 
 
 @canvas_tool.command()
