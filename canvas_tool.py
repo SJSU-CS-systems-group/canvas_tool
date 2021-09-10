@@ -83,15 +83,16 @@ def get_courses(canvas: Canvas, name: str, is_active=True, is_finished=False) ->
     now = datetime.datetime.now(datetime.timezone.utc)
     course_list = []
     for c in courses:
-        start = c.start_at_date if hasattr(c, "start_at_date") else None
-        end = c.end_at_date if hasattr(c, "end_at_date") else None
-        if start and end and start < now:
-            if is_active and end < now:
-                continue
-            if is_finished and c.end_at_date > now:
-                continue
-            if name in c.name:
-                course_list.append(c)
+        start = c.start_at_date if hasattr(c, "start_at_date") else now
+        end = c.end_at_date if hasattr(c, "end_at_date") else now
+        if is_active and (start > now or end < now):
+            continue
+        if is_finished and end < now:
+            contine
+        if name in c.name:
+            c.start = start
+            c.end = end
+            course_list.append(c)
     return course_list
 
 
@@ -182,10 +183,26 @@ def list_courses(active, matcher, formatter):
     canvas = get_canvas_object()
     courses = get_courses(canvas, "", is_active=active)
     for c in courses:
-        start = c.start_at_date if hasattr(c, "start_at_date") else "none"
-        end = c.end_at_date if hasattr(c, "end_at_date") else "none"
         name = c.name if hasattr(c, "name") else "none"
-        info(f"{c.id} {format_course_name(name, matcher, formatter)} {start:%Y-%m-%d} {end:%Y-%m-%d}")
+        info(f"{c.id} {format_course_name(name, matcher, formatter)} {c.start:%Y-%m-%d} {c.end:%Y-%m-%d}")
+
+
+@canvas_tool.command()
+@click.argument('course')
+@click.option('--active/--inactive', default=True, help="show only active courses")
+@click.option('--emails/--no_emails', help="list student emails")
+def list_students(course, active, emails):
+    '''list the students in a course'''
+    canvas = get_canvas_object()
+    course = get_course(canvas, course, active)
+    info(f"found {course.name}")
+    info_keys = "name" + (" email" if emails else "")
+    results = canvas.graphql('query { course(id: "' + str(course.id) + '''") {
+               enrollmentsConnection { nodes { user {''' + info_keys + '''} } }
+           } }''')
+    for r in results['data']['course']['enrollmentsConnection']['nodes']:
+        user = r['user']
+        print(f"    {user['name']} {user['email'] if 'email' in user else ''}")
 
 
 def to_plus(grade, levels):
