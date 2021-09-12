@@ -37,6 +37,10 @@ def info(message):
     click.echo(click.style(message, fg='blue'))
 
 
+def output(message):
+    click.echo(message)
+
+
 def get_canvas_object():
     parser = ConfigParser()
     parser.read([config_ini])
@@ -102,6 +106,13 @@ def get_assignment(course, title):
     ''' find the assignment based on partial match '''
     assignments = list(course.get_course_level_assignment_data())
     filtered_assignments = [a for a in assignments if title in a['title']]
+    if not title:
+        # if an assignment title wasn't specified, we don't want to return
+        # anything even if there is one result.
+        output(f'possible assignments for {course.name}')
+        for a in assignments:
+            output(f"    {a['title']}")
+        sys.exit(1)
     if len(filtered_assignments) == 0:
         error(f'{title} assignment not found. possible assignments are:')
         for a in assignments:
@@ -147,8 +158,8 @@ def count_words(content):
 
 
 @canvas_tool.command()
-@click.argument('course_name', metavar='course_name')
-@click.argument('assignment_name', metavar='assignment_name')
+@click.argument('course_name', metavar='course')
+@click.argument('assignment_name', metavar='assignment', default='')
 @click.option('--dryrun/--no-dryrun', default=True, show_default=True,
         help="only show the grade, don't actually set it")
 @click.option('--min-words', default=5, show_default=True,
@@ -228,7 +239,7 @@ def list_courses(active, matcher, formatter):
     courses = get_courses(canvas, "", is_active=active)
     for c in courses:
         name = c.name if hasattr(c, "name") else "none"
-        info(f"{c.id} {format_course_name(name, matcher, formatter)} {c.start:%Y-%m-%d} {c.end:%Y-%m-%d}")
+        output(f"{c.id} {format_course_name(name, matcher, formatter)} {c.start:%Y-%m-%d} {c.end:%Y-%m-%d}")
 
 
 @canvas_tool.command()
@@ -239,14 +250,14 @@ def list_students(course, active, emails):
     '''list the students in a course'''
     canvas = get_canvas_object()
     course = get_course(canvas, course, active)
-    info(f"found {course.name}")
+    output(f"found {course.name}")
     info_keys = "name" + (" email" if emails else "")
     results = canvas.graphql('query { course(id: "' + str(course.id) + '''") {
                enrollmentsConnection { nodes { user {''' + info_keys + '''} } }
            } }''')
     for r in results['data']['course']['enrollmentsConnection']['nodes']:
         user = r['user']
-        print(f"    {user['name']} {user['email'] if 'email' in user else ''}")
+        output(f"    {user['name']} {user['email'] if 'email' in user else ''}")
 
 
 @canvas_tool.command()
@@ -347,7 +358,7 @@ def collect_reference_info(course, thresholds, skip):
                         grades_by_student[name].append(Grade(category, pluses))
         for i in grades_by_student.items():
             label = f'{i[0]}@{format_course_name(course.name)}'
-            print(f'{label} {" ".join([g.category+":"+g.grade for g in i[1]])}')
+            output(f'{label} {" ".join([g.category+":"+g.grade for g in i[1]])}')
     
 
 def print_config_ini_format(is_info):
