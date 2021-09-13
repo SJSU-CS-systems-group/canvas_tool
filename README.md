@@ -1,7 +1,7 @@
 # canvas_tool
 a command-line python based tool for teachers who use canvas. 
 
-you can download from canvas_tool.pyz from https://github.com/SJSU-CS-systems-group/canvas_tool/releases/download/v0.1/canvas_tool.pyz
+you can download from canvas_tool.pyz from [latest release](https://github.com/SJSU-CS-systems-group/canvas_tool/releases).
 
 run it with `python3 canvas_tool.pyz` or `python canvas_tool.pyz`.
 
