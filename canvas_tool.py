@@ -1,16 +1,21 @@
 from canvasapi import Canvas
 from canvasapi.course import Course
+from canvasapi.requester import Requester
 import click
 from collections import defaultdict, namedtuple
 from configparser import ConfigParser
 import datetime
+import functools
 import glob
+import logging
 from html.parser import HTMLParser
 import os
 import re
+import shutil
 import string
 import sys
 import urllib
+import urllib.request
 
 course_name_matcher=r"((\S*): (\S+)\s.*)"
 course_name_formatter=r"\2:\3"
@@ -41,6 +46,19 @@ def output(message):
     click.echo(message)
 
 
+@functools.lru_cache
+def get_requester():
+    parser = ConfigParser()
+    parser.read([config_ini])
+    if "SERVER" not in parser:
+        error(f"did not find [SERVER] section in {config_ini}")
+        info("try using the help-me-setup command")
+        sys.exit(1)
+    return Requester(parser['SERVER']['url'], parser['SERVER']['token'])
+    
+
+access_token = None
+
 def get_canvas_object():
     parser = ConfigParser()
     parser.read([config_ini])
@@ -57,6 +75,7 @@ def get_canvas_object():
         user = canvas.get_current_user()
         info(f"accessing canvas as {user.name} ({user.id})")
         canvas.user_id = user.id
+        access_token = parser['SERVER']['token']
         return canvas
     except:
         error(f"there was a problem accessing canvas. try using help-me-setup.")
@@ -64,8 +83,14 @@ def get_canvas_object():
 
 
 @click.group()
-def canvas_tool():
-    pass
+@click.option("--log-level",
+    type=click.Choice(['CRITICAL','ERROR', 'WARNING', 'INFO', 'DEBUG'], case_sensitive=False),
+    help="set python logging level")
+def canvas_tool(log_level):
+    if log_level:
+        log_level_int = getattr(logging, log_level.upper())
+        print(log_level_int)
+        logging.basicConfig(level=log_level_int)
 
 
 def get_course(canvas, name, is_active=True) -> Course:
@@ -157,6 +182,101 @@ def count_words(content):
         return wc.checked_word_count
 
 
+
+
+@canvas_tool.command()
+@click.argument('course_name', metavar='course')
+@click.argument('assignment_name', metavar='assignment', default='')
+@click.option('--dryrun/--no-dryrun', default=True, show_default=True,
+        help="only show the grade, don't actually set it")
+def download_submissions(course_name, assignment_name, dryrun):
+    '''
+    download submissions for an assignment.
+    '''
+
+    canvas = get_canvas_object()
+
+    course = get_course(canvas, course_name)
+
+    assignment = get_assignment(course, assignment_name)
+    submissions = list(assignment.get_submissions())
+    
+    if dryrun:
+        info(f"{len(submissions)} submissions to download")
+        sys.exit(0)
+    
+    with click.progressbar(submissions, label="downloading submission", show_pos=True) as bar:
+        for s in bar:
+            count = 1
+            user_name = course.get_user(s.user_id).name
+            dir = os.path.join(assignment_name, user_name.replace(' ', '-'))
+            os.makedirs(dir, exist_ok=True)
+            if not hasattr(s, "attachments"):
+                continue
+            for a in s.attachments:
+                fname = f"attachment{count}{os.path.splitext(a['filename'])[1]}"    
+                urllib.request.urlretrieve(a['url'], f'{dir}/{fname}')
+                count += 1
+    
+
+"""
+    graphql urls don't have needed verifier yet
+    query = ""
+    query submissions($assignmentid: ID!) {
+        assignment(id: $assignmentid) { submissionsConnection {
+            nodes { attachments { url displayName } user { name }
+                    commentsConnection { nodes { comment attachments { url displayName}}}
+            }
+        }}
+    }
+    ""
+    result = canvas.graphql(query, {"assignmentid": assignment.id})
+    submissions = result['data']['assignment']['submissionsConnection']['nodes']
+    
+    if dryrun:
+        info(f"{len(submissions)} submissions to download")
+        for s in submissions:
+            url=s["attachments"][0]["url"]
+            request = urllib.request.Request(url, headers={"Authorization": f"Bearer {access_token}"})
+            with urllib.request.urlopen(request) as response:
+                print(response)
+                with open("downloaded.txt", "wb") as fd:
+                    shutil.copyfileobj(response, fd)
+            sys.exit(0)
+
+
+    with click.progressbar(length=len(submissions), label="downloading submission", show_pos=True) as bar:
+        for s in submissions:
+            count = 1
+            name = s['user']['name']
+            dir = os.path.join(assignment_name, name.replace(' ', '-'))
+            os.makedirs(dir, exist_ok=True)
+            for a in s['attachments']:
+                download_attachment(canvas, f'{dir}/submission{count}', a)
+                count += 1
+            count = 1
+            for c in s['commentsConnection']['nodes']:
+                with open(os.path.join(dir, f"comment{count}.txt"), 'w') as fd:
+                    fd.write(c['comment'])
+                subcount = 1
+                for ca in c['attachments']:
+                    download_attachment(canvas, f'{dir}/comment{count}attachment{subcount}', ca)
+                    subcount += 1
+                count += 1
+            bar.update(1)
+ """
+def download_attachment(canvas, basename, a):
+    fname = a['displayName']
+    suffix = os.path.splitext(fname)[1]
+    durl = a['url']
+    result = get_requester().request("GET", _url=durl)
+    if result.status_code != 200:
+        error(f'error {result.status_code} fetching {durl}')
+        return
+    with open(f"{basename}{suffix}", "wb") as fd:
+        for chunk in result.iter_content():
+            fd.write(chunk)
+
 @canvas_tool.command()
 @click.argument('course_name', metavar='course')
 @click.argument('assignment_name', metavar='assignment', default='')
@@ -221,6 +341,41 @@ def grade_discussion(course_name, assignment_name, dryrun, min_words):
             for i in grades.items():
                 i[0].edit(submission={'posted_grade': i[1]})
                 bar.update(1)
+
+
+@canvas_tool.command()
+@click.argument('course_name')
+@click.argument('quiz_name', default='')
+@click.argument('points', default=-1)
+def set_fudge_points(course_name, quiz_name, points):
+    '''
+    set the fudge points for a quiz.
+
+    course_name - any part of an active course name. for example, 249 will match CS249.
+    the course must active (it has not passed the end date) to be eligible for matching.
+    only the first match will be used.
+
+    quiz_name - any part of an quiz's name will be matched. if multiple quizes match, the
+    points will not be set.
+    '''
+
+    canvas = get_canvas_object()
+
+    course = get_course(canvas, course_name)
+
+    quizzes = list(course.get_quizzes())
+    selected_quizzes = [q for q in quizzes if quiz_name in q.title]
+
+    if not selected_quizzes:
+        error(f"could not find {quiz_name} in {', '.join([q.title for q in quizzes])}")
+    elif len(selected_quizzes) > 1:
+        error(f"multiple matches for {quiz_name}: {', '.join([q.title for q in selected_quizzes])}")
+    else:
+        for s in selected_quizzes[0].get_submissions():
+            if points == -1:
+                info(f"{s.user_id} {s.fudge_points}")
+            else:
+                s.update_score_and_comments(fudge_points=points)
 
 
 @canvas_tool.command()
