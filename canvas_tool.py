@@ -17,6 +17,8 @@ import sys
 import urllib
 import urllib.request
 
+import requests
+
 course_name_matcher=r"((\S*): (\S+)\s.*)"
 course_name_formatter=r"\2:\3"
 
@@ -58,6 +60,7 @@ def get_requester():
     
 
 access_token = None
+canvas_url = None
 
 def get_canvas_object():
     parser = ConfigParser()
@@ -75,7 +78,9 @@ def get_canvas_object():
         user = canvas.get_current_user()
         info(f"accessing canvas as {user.name} ({user.id})")
         canvas.user_id = user.id
+        global access_token, canvas_url
         access_token = parser['SERVER']['token']
+        canvas_url = parser['SERVER']['url']
         return canvas
     except:
         error(f"there was a problem accessing canvas. try using help-me-setup.")
@@ -199,29 +204,8 @@ def download_submissions(course_name, assignment_name, dryrun):
     course = get_course(canvas, course_name)
 
     assignment = get_assignment(course, assignment_name)
-    submissions = list(assignment.get_submissions())
-    
-    if dryrun:
-        info(f"{len(submissions)} submissions to download")
-        sys.exit(0)
-    
-    with click.progressbar(submissions, label="downloading submission", show_pos=True) as bar:
-        for s in bar:
-            count = 1
-            user_name = course.get_user(s.user_id).name
-            dir = os.path.join(assignment_name, user_name.replace(' ', '-'))
-            os.makedirs(dir, exist_ok=True)
-            if not hasattr(s, "attachments"):
-                continue
-            for a in s.attachments:
-                fname = f"attachment{count}{os.path.splitext(a['filename'])[1]}"    
-                urllib.request.urlretrieve(a['url'], f'{dir}/{fname}')
-                count += 1
-    
 
-"""
-    graphql urls don't have needed verifier yet
-    query = ""
+    query = """
     query submissions($assignmentid: ID!) {
         assignment(id: $assignmentid) { submissionsConnection {
             nodes { attachments { url displayName } user { name }
@@ -229,21 +213,22 @@ def download_submissions(course_name, assignment_name, dryrun):
             }
         }}
     }
-    ""
-    result = canvas.graphql(query, {"assignmentid": assignment.id})
+    """
+    session = requests.Session()
+    with session.post(canvas_url+"/api/graphql",
+                      json={"query": query, "variables": {"assignmentid": assignment.id}},
+                      headers={
+                           "X-CSRF-Token": "{CSRF}",
+                           "Content-Type": "application/json",
+                           "Accept": "application/json+canvas-string-ids, application/json, text/plain, */*",
+                           "Cookie": "_ga={GA}; fs_uid={UID}; _gid={GID}; _csrf_token={urlencode(CSRF)}; log_session_id={log_sid}; _legacy_normandy_session={leg_norm_sess}; canvas_session={canvas_session}; _gat=1"
+                           }) as response:
+        result = response.json()
     submissions = result['data']['assignment']['submissionsConnection']['nodes']
     
     if dryrun:
         info(f"{len(submissions)} submissions to download")
-        for s in submissions:
-            url=s["attachments"][0]["url"]
-            request = urllib.request.Request(url, headers={"Authorization": f"Bearer {access_token}"})
-            with urllib.request.urlopen(request) as response:
-                print(response)
-                with open("downloaded.txt", "wb") as fd:
-                    shutil.copyfileobj(response, fd)
-            sys.exit(0)
-
+        sys.exit(0)
 
     with click.progressbar(length=len(submissions), label="downloading submission", show_pos=True) as bar:
         for s in submissions:
@@ -252,7 +237,7 @@ def download_submissions(course_name, assignment_name, dryrun):
             dir = os.path.join(assignment_name, name.replace(' ', '-'))
             os.makedirs(dir, exist_ok=True)
             for a in s['attachments']:
-                download_attachment(canvas, f'{dir}/submission{count}', a)
+                download_attachment(f'{dir}/submission{count}', a)
                 count += 1
             count = 1
             for c in s['commentsConnection']['nodes']:
@@ -260,22 +245,22 @@ def download_submissions(course_name, assignment_name, dryrun):
                     fd.write(c['comment'])
                 subcount = 1
                 for ca in c['attachments']:
-                    download_attachment(canvas, f'{dir}/comment{count}attachment{subcount}', ca)
+                    download_attachment(f'{dir}/comment{count}attachment{subcount}', ca)
                     subcount += 1
                 count += 1
             bar.update(1)
- """
-def download_attachment(canvas, basename, a):
+
+def download_attachment(basename, a):
     fname = a['displayName']
     suffix = os.path.splitext(fname)[1]
     durl = a['url']
-    result = get_requester().request("GET", _url=durl)
-    if result.status_code != 200:
-        error(f'error {result.status_code} fetching {durl}')
-        return
-    with open(f"{basename}{suffix}", "wb") as fd:
-        for chunk in result.iter_content():
-            fd.write(chunk)
+    with requests.get(durl) as response:
+        if response.status_code != 200:
+            error(f'error {response.status_code} fetching {durl}')
+            return
+        with open(f"{basename}{suffix}", "wb") as fd:
+            for chunk in response.iter_content():
+                fd.write(chunk)
 
 @canvas_tool.command()
 @click.argument('course_name', metavar='course')
@@ -319,7 +304,7 @@ def grade_discussion(course_name, assignment_name, dryrun, min_words):
             skipped += 1
             continue
 
-        grade = 0;
+        grade = 0
         for entry in s.discussion_entries:
             if 'message' in entry and count_words(entry['message']) > 5:
                 grade = min(grade+1, 2)
