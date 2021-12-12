@@ -44,6 +44,10 @@ def info(message):
     click.echo(click.style(message, fg='blue'))
 
 
+def warn(message):
+    click.echo(click.style(message, fg='yellow'))
+
+
 def output(message):
     click.echo(message)
 
@@ -455,6 +459,91 @@ def to_plus(grade, levels):
         if grade >= level:
             pluses += '+'
     return pluses
+
+
+letter_grades = [(96, "A+"), (93, "A"), (90, "A-"),
+                 (86, "B+"), (83, "B"), (80, "B-"),
+                 (76, "C+"), (73, "C"), (70, "C-"),
+                 (66, "D+"), (63, "D"), (60, "D-"),
+                 (0, "F")]
+def points_to_letter(points, round):
+    points += round
+    for letter in letter_grades:
+        if points >= letter[0]:
+            return letter[1]
+
+
+@canvas_tool.command()
+@click.argument("course")
+@click.option("--round", default=0, help="points to add to the final score before calculating the letter grade.")
+@click.option("--dryrun/--no-dryrun", default=True)
+def set_letter_grade(course, round, dryrun):
+    ''' calculate the letter grade based on the final score in the class.
+
+    the "Reported Letter Grade" assignment must be created in the gradebook as a letter grade assignment
+    before this command is run.
+    the command will loop through all the students in the class and set the letter grade in that assignment
+    based on the final score in the class.
+    '''
+    
+    canvas = get_canvas_object()
+    course = get_course(canvas, course)
+
+    rlg_assignment = get_assignment(course, "Reported Letter Grade")
+    if not rlg_assignment:
+        error('the "Reported Letter Grade" assignment hasn\'t been set up')
+        exit(2)
+
+    user_to_grade = {}
+    for enrollment in course.get_enrollments(include=['grades']):
+        if hasattr(enrollment, "grades"):
+            letter = points_to_letter(enrollment.grades['final_score'], round)
+            user_to_grade[enrollment.user['id']] = (enrollment.user, letter, enrollment.grades['final_score'])
+
+    if dryrun:
+        for submission in rlg_assignment.get_submissions():
+            (user, letter, score) = user_to_grade[submission.user_id]
+            info(f"{letter} {score} {user['name']}")
+        warn("This was a dryrun. Nothing has been updated")
+    else:
+        with click.progressbar(length=len(user_to_grade), label="updating grades", show_pos=True) as bar:
+            for submission in rlg_assignment.get_submissions():
+                (user, letter, score) = user_to_grade[submission.user_id]
+                submission.edit(submission={'posted_grade': letter})
+                bar.update(1)
+
+
+@canvas_tool.command()
+@click.argument("course")
+@click.argument("csv_output_file", type=click.File("w"))
+def export_letter_grade(course, csv_output_file):
+    ''' export course letter grade to CSV
+
+    the "Reported Letter Grade" column must be setup in the gradebook.
+    this command will pull down the letter grades from that column an print a CSV record
+    with the student id and the corresponding letter grade.
+    output will got to the indicated csv_output_file.
+    an output file name of - will go to stdout.
+    '''
+
+    canvas = get_canvas_object()
+    course = get_course(canvas, course)
+
+    rlg_assignment = get_assignment(course, "Reported Letter Grade")
+    if not rlg_assignment:
+        error('the "Reported Letter Grade" assignment hasn\'t been set up')
+        exit(2)
+
+    count = 0
+    csv_output_file.write("Student ID,Grade\n")
+    for submission in rlg_assignment.get_submissions():
+        user = course.get_user(submission.user_id)
+        if user.sis_user_id:
+            csv_output_file.write(f"{user.sis_user_id}, {submission.grade}\n")
+            count += 1
+
+    info(f"{count} records written to {csv_output_file.name}")
+
 
 @canvas_tool.command()
 @click.argument("course")
