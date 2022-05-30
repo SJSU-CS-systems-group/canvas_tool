@@ -61,7 +61,7 @@ def get_requester():
         info("try using the help-me-setup command")
         sys.exit(1)
     return Requester(parser['SERVER']['url'], parser['SERVER']['token'])
-    
+
 
 access_token = None
 canvas_url = None
@@ -127,8 +127,8 @@ def get_courses(canvas: Canvas, name: str, is_active=True, is_finished=False) ->
         end = c.end_at_date if hasattr(c, "end_at_date") else now
         if is_active and (start > now or end < now):
             continue
-        if is_finished and end < now:
-            contine
+        if is_finished and end >= now:
+            continue
         if name in c.name:
             c.start = start
             c.end = end
@@ -229,7 +229,7 @@ def download_submissions(course_name, assignment_name, dryrun):
                            }) as response:
         result = response.json()
     submissions = result['data']['assignment']['submissionsConnection']['nodes']
-    
+
     if dryrun:
         info(f"{len(submissions)} submissions to download")
         sys.exit(0)
@@ -475,7 +475,7 @@ def points_to_letter(points, round):
 
 @canvas_tool.command()
 @click.argument("course")
-@click.option("--round", default=0, help="points to add to the final score before calculating the letter grade.")
+@click.option("--round", default=0.0, help="points to add to the final score before calculating the letter grade.")
 @click.option("--dryrun/--no-dryrun", default=True)
 def set_letter_grade(course, round, dryrun):
     ''' calculate the letter grade based on the final score in the class.
@@ -485,7 +485,7 @@ def set_letter_grade(course, round, dryrun):
     the command will loop through all the students in the class and set the letter grade in that assignment
     based on the final score in the class.
     '''
-    
+
     canvas = get_canvas_object()
     course = get_course(canvas, course)
 
@@ -497,20 +497,27 @@ def set_letter_grade(course, round, dryrun):
     user_to_grade = {}
     for enrollment in course.get_enrollments(include=['grades']):
         if hasattr(enrollment, "grades"):
+            current_score = enrollment.grades['current_score']
+            final_score = enrollment.grades['final_score']
+            if current_score != final_score:
+                warn(f"current_score of {current_score} != {final_score} for {enrollment.user['name']} SKIPPING")
+                continue
             letter = points_to_letter(enrollment.grades['final_score'], round)
             user_to_grade[enrollment.user['id']] = (enrollment.user, letter, enrollment.grades['final_score'])
 
     if dryrun:
         for submission in rlg_assignment.get_submissions():
-            (user, letter, score) = user_to_grade[submission.user_id]
-            info(f"{letter} {score} {user['name']}")
+            if submission.user_id in user_to_grade:
+                (user, letter, score) = user_to_grade[submission.user_id]
+                info(f"{letter} {score} {user['name']}")
         warn("This was a dryrun. Nothing has been updated")
     else:
         with click.progressbar(length=len(user_to_grade), label="updating grades", show_pos=True) as bar:
             for submission in rlg_assignment.get_submissions():
-                (user, letter, score) = user_to_grade[submission.user_id]
-                submission.edit(submission={'posted_grade': letter})
-                bar.update(1)
+                if submission.user_id in user_to_grade:
+                    (user, letter, score) = user_to_grade[submission.user_id]
+                    submission.edit(submission={'posted_grade': letter})
+                    bar.update(1)
 
 
 @canvas_tool.command()
