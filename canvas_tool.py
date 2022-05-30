@@ -688,21 +688,24 @@ def collect_reference_info(course, thresholds, skip):
                                              enrollment { user { name } }
                                            } } } } } } }''')
         grades_by_student = defaultdict(list)
+
         for assignment_group in results['data']['course']['assignmentGroupsConnection']['nodes']:
             category = assignment_group['name']
             if any(x in category.lower() for x in skip):
                 continue
             for grade in assignment_group['gradesConnection']['edges']:
                 score = grade['node']['currentScore']
+                name = grade['node']['enrollment']['user']['name']
                 if score:
                     pluses = to_plus(score, thresholds)
                     if pluses:
-                        name = grade['node']['enrollment']['user']['name']
                         grades_by_student[name].append(Grade(category, pluses))
+                else:
+                    grades_by_student[name]
         for i in grades_by_student.items():
             label = f'{i[0]}@{format_course_name(course.name)}'
             output(f'{label} {" ".join([g.category+":"+g.grade for g in i[1]])}')
-    
+
 
 def print_config_ini_format(is_info):
     func = info if is_info else error
