@@ -218,16 +218,7 @@ def download_submissions(course_name, assignment_name, dryrun):
         }}
     }
     """
-    session = requests.Session()
-    with session.post(canvas_url+"/api/graphql",
-                      json={"query": query, "variables": {"assignmentid": assignment.id}},
-                      headers={
-                           "X-CSRF-Token": "{CSRF}",
-                           "Content-Type": "application/json",
-                           "Accept": "application/json+canvas-string-ids, application/json, text/plain, */*",
-                           "Cookie": "_ga={GA}; fs_uid={UID}; _gid={GID}; _csrf_token={urlencode(CSRF)}; log_session_id={log_sid}; _legacy_normandy_session={leg_norm_sess}; canvas_session={canvas_session}; _gat=1"
-                           }) as response:
-        result = response.json()
+    result = canvas.graphql(query,{"assignmentid": assignment.id})
     submissions = result['data']['assignment']['submissionsConnection']['nodes']
 
     if dryrun:
@@ -258,6 +249,7 @@ def download_attachment(basename, a):
     fname = a['displayName']
     suffix = os.path.splitext(fname)[1]
     durl = a['url']
+    info(f'downloading {a}');
     with requests.get(durl) as response:
         if response.status_code != 200:
             error(f'error {response.status_code} fetching {durl}')
@@ -401,7 +393,10 @@ def list_students(course, active, emails):
            } }''')
     for r in results['data']['course']['enrollmentsConnection']['nodes']:
         user = r['user']
-        output(f"    {user['name']} {user['email'] if 'email' in user else ''}")
+        if emails:
+            output(f"    {user['email']} {user['name']} ")
+        else:
+            output(f"    {user['name']} ")
 
 
 @canvas_tool.command()
