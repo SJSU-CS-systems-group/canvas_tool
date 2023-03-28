@@ -1,5 +1,6 @@
 from canvasapi import Canvas
 from canvasapi.course import Course
+from canvasapi.discussion_topic import DiscussionEntry
 from canvasapi.requester import Requester
 import click
 from collections import defaultdict, namedtuple
@@ -136,7 +137,7 @@ def get_courses(canvas: Canvas, name: str, is_active=True, is_finished=False) ->
     return course_list
 
 
-def get_assignment(course, title):
+def get_assignments(course, title):
     ''' find the assignment based on partial match '''
     assignments = list(course.get_course_level_assignment_data())
     filtered_assignments = [a for a in assignments if title in a['title']]
@@ -147,6 +148,11 @@ def get_assignment(course, title):
         for a in assignments:
             output(f"    {a['title']}")
         sys.exit(1)
+    return filtered_assignments
+
+
+def get_assignment(course, title):
+    filtered_assignments = get_assignments(course, title)
     if len(filtered_assignments) == 0:
         error(f'{title} assignment not found. possible assignments are:')
         for a in assignments:
@@ -265,7 +271,11 @@ def download_attachment(basename, a):
         help="only show the grade, don't actually set it")
 @click.option('--min-words', default=5, show_default=True,
         help="the minimum number of valid words to get credit")
-def grade_discussion(course_name, assignment_name, dryrun, min_words):
+@click.option('--points-comment', default=1, show_default=True,
+        help="number of points for posting a comment")
+@click.option('--max-points', default=2, show_default=True,
+        help="maximum number of points to give")
+def grade_discussion(course_name, assignment_name, dryrun, min_words, points_comment, max_points):
     '''
     grade a discussion assignment based on participation.
 
@@ -284,44 +294,56 @@ def grade_discussion(course_name, assignment_name, dryrun, min_words):
 
     course = get_course(canvas, course_name)
 
-    assignment = get_assignment(course, assignment_name)
-    submissions = assignment.get_submissions()
-    grades = {}
-    skipped = 0
-    processed = 0
-
-    # we calculate the grades and upload them in two steps since the second
-    # step is slow so we want to do a progress bar. we could still do it all
-    # in one pass if we could get the count. i can't find a way to do that
-    # without going through the submissions
-    for s in submissions:
-        processed += 1
-        if not hasattr(s, "discussion_entries"):
-            skipped += 1
+    now = datetime.datetime.now(datetime.timezone.utc)
+    assignments = get_assignments(course, assignment_name)
+    for assignment_data in assignments:
+        info(f"grading {assignment_data['title']}")
+        assignment = course.get_assignment(assignment_data['assignment_id'])
+        due_at_date = assignment.due_at_date
+        if due_at_date > now:
+            warn(f"{assignment_data['title']} not due: skipping")
             continue
+        submissions = assignment.get_submissions()
+        grades = {}
+        skipped = 0
+        processed = 0
 
-        grade = 0
-        for entry in s.discussion_entries:
-            if 'message' in entry and count_words(entry['message']) > 5:
-                grade = min(grade+1, 2)
+        # we calculate the grades and upload them in two steps since the second
+        # step is slow so we want to do a progress bar. we could still do it all
+        # in one pass if we could get the count. i can't find a way to do that
+        # without going through the submissions
+        for s in submissions:
+            processed += 1
+            if not hasattr(s, "discussion_entries"):
+                skipped += 1
+                continue
 
-        grades[s] = grade
+            grade = 0
+            for entry in s.discussion_entries:
+                entry = DiscussionEntry(None, entry)
+                if entry.created_at_date > due_at_date:
+                    info(f"skipping discussion from {s.user_id} submitted at {entry.created_at_date} but due {due_at_date}")
+                    continue
+                if count_words(entry.message) > 5:
+                    grade = min(grade+points_comment, max_points)
 
-    if skipped == processed:
-        error(f"'{assignment.name}' doesn't appear to be a discussion assignment")
-        sys.exit(2)
+            grades[s] = grade
 
-    info(f"processed {processed}, skipped {skipped}.")
+        if skipped == processed:
+            error(f"'{assignment.name}' doesn't appear to be a discussion assignment")
+            sys.exit(2)
 
-    if dryrun:
-        info("would have posted:")
-        for i in grades.items():
-            info(f"    {i[0]} {i[1]}")
-    else:
-        with click.progressbar(length=len(grades), label="updating grades", show_pos=True) as bar:
+        info(f"processed {processed}, skipped {skipped}.")
+
+        if dryrun:
+            info("would have posted:")
             for i in grades.items():
-                i[0].edit(submission={'posted_grade': i[1]})
-                bar.update(1)
+                info(f"    {i[0]} {i[1]}")
+        else:
+            with click.progressbar(length=len(grades), label="updating grades", show_pos=True) as bar:
+                for i in grades.items():
+                    i[0].edit(submission={'posted_grade': i[1]})
+                    bar.update(1)
 
 
 @canvas_tool.command()
