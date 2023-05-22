@@ -161,7 +161,7 @@ def get_assignment(course, title):
     filtered_assignments = get_assignments(course, title)
     if len(filtered_assignments) == 0:
         error(f'{title} assignment not found. possible assignments are:')
-        for a in assignments:
+        for a in get_assignments(course, ""):
             error(f"    {a['title']}")
         sys.exit(2)
     if len(filtered_assignments) > 1:
@@ -537,10 +537,10 @@ def to_plus(grade, levels):
     return pluses
 
 
-letter_grades = [(96, "A+"), (93, "A"), (90, "A-"),
-                 (86, "B+"), (83, "B"), (80, "B-"),
-                 (76, "C+"), (73, "C"), (70, "C-"),
-                 (66, "D+"), (63, "D"), (60, "D-"),
+letter_grades = [(98, "A+"), (92, "A"), (90, "A-"),
+                 (88, "B+"), (82, "B"), (80, "B-"),
+                 (78, "C+"), (72, "C"), (70, "C-"),
+                 (68, "D+"), (62, "D"), (60, "D-"),
                  (0, "F")]
 def points_to_letter(points, round):
     points += round
