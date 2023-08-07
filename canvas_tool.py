@@ -1,26 +1,26 @@
-import click
 import datetime
 import functools
-import glob
 import logging
-import mosspy
 import os
 import re
-import requests
-import shutil
 import string
 import sys
 import tempfile
 import urllib
+import urllib.parse
 import urllib.request
 import zipfile
+from collections import defaultdict, namedtuple
+from configparser import ConfigParser
+from html.parser import HTMLParser
+
+import click
+import mosspy
+import requests
 from canvasapi import Canvas
 from canvasapi.course import Course
 from canvasapi.discussion_topic import DiscussionEntry
 from canvasapi.requester import Requester
-from collections import defaultdict, namedtuple
-from configparser import ConfigParser
-from html.parser import HTMLParser
 
 course_name_matcher = r"((\S*): (\S+)\s.*)"
 course_name_formatter = r"\2:\3"
@@ -109,7 +109,7 @@ def canvas_tool(log_level):
 
 
 def get_course(canvas, name, is_active=True) -> Course:
-    ''' find one course based on partial match '''
+    """ find one course based on partial match """
     course_list = get_courses(canvas, name, is_active)
     if len(course_list) == 0:
         error(f'no courses found that contain {name}. options are:')
@@ -302,7 +302,7 @@ def download_attachment(basename, a):
     fname = a['displayName']
     suffix = os.path.splitext(fname)[1]
     durl = a['url']
-    info(f'downloading {a}');
+    info(f'downloading {a}')
     with requests.get(durl) as response:
         if response.status_code != 200:
             error(f'error {response.status_code} fetching {durl}')
@@ -679,7 +679,7 @@ def min_grade_analyzer(course, min_grade):
             category = assignment_group['name']
             weight = assignment_group['groupWeight']
             weights[category] = weight
-            assignment_group_id = assignment_group['id'];
+            assignment_group_id = assignment_group['id']
             assignments = canvas.graphql('query { assignmentGroup(id: "' + assignment_group_id + '''") {
                                          assignmentsConnection {
                                              nodes {
@@ -714,8 +714,8 @@ def min_grade_analyzer(course, min_grade):
             for (cat, scores) in assignments.items():
                 cat_total = sum([current_score for (current_score, points_possible) in scores])
                 min_scores = [(
-                              current_score if not points_possible or current_score >= points_possible * min_grade else points_possible * min_grade,
-                              points_possible) for (current_score, points_possible) in scores]
+                    current_score if not points_possible or current_score >= points_possible * min_grade else points_possible * min_grade,
+                    points_possible) for (current_score, points_possible) in scores]
                 min_cat_total = sum([current_score for (current_score, points_possible) in min_scores])
                 cat_possible = sum([points_possible for (current_score, points_possible) in scores])
                 if cat_possible == 0:
@@ -771,8 +771,6 @@ def collect_reference_info(course, thresholds, skip):
                     pluses = to_plus(score, thresholds)
                     if pluses:
                         grades_by_student[name].append(Grade(category, pluses))
-                else:
-                    grades_by_student[name]
         for i in grades_by_student.items():
             label = f'{i[0]}@{format_course_name(course.name)}'
             output(f'{label} {" ".join([g.category + ":" + g.grade for g in i[1]])}')
@@ -802,7 +800,7 @@ def check_key(key, obj):
 
 @canvas_tool.command()
 def help_me_setup():
-    '''provide guidance through the setup process'''
+    """provide guidance through the setup process"""
     if os.path.isfile(config_ini):
         info(f"great! {config_ini} exists. let's check it!")
     else:
