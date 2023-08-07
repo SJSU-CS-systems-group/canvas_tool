@@ -13,7 +13,9 @@ import zipfile
 from collections import defaultdict, namedtuple
 from configparser import ConfigParser
 from html.parser import HTMLParser
+from typing import NamedTuple
 
+import canvasapi.file
 import click
 import mosspy
 import requests
@@ -796,6 +798,105 @@ def check_key(key, obj):
         print_config_ini_format(False)
         sys.exit(2)
     return obj[key]
+
+
+def download_modules(course, target, dryrun):
+    pass
+
+
+def download_discussions(course, target, dryrun):
+    pass
+
+
+def download_assignments(course, target, dryrun):
+    pass
+
+
+def download_pages(course, target, dryrun):
+    pass
+
+
+def download_files(course, target, dryrun):
+    class ToDownload(NamedTuple):
+        file: canvasapi.file.File
+        target: str
+    error_seen = False
+    to_download = []
+    for folder in course.get_folders():
+        target_dir = os.path.join(target, str(folder))
+        if os.path.exists(target_dir):
+            if not os.path.isdir(target_dir):
+                error(f"{target_dir} is not a directory. skipping")
+                error_seen = True
+                continue
+        else:
+            if dryrun:
+                info(f"would create {target_dir}")
+            else:
+                os.makedirs(target_dir)
+
+        for file in folder.get_files():
+            full_name = os.path.join(str(folder), str(file))
+            target_file = os.path.join(target_dir, str(file))
+            if dryrun:
+                info(f"would download {full_name} to {target_file}")
+            else:
+                if os.path.exists(target_file):
+                    warn(f"{target_file} already exists. skipping")
+                else:
+                    to_download.append(ToDownload(file, target_file))
+
+    if to_download:
+        with click.progressbar(to_download, label="downloading") as tds:
+            for td in tds:
+                print(f" {td.file}", end='', flush=True)
+                td.file.download(td.target)
+def download_announcements(course, target, dryrun):
+    pass
+
+
+@canvas_tool.command()
+@click.argument('course_name', metavar='course')
+@click.option('--dryrun/--no-dryrun', default=True, show_default=True, help="show what would happen, but don't do it.")
+@click.option('--modules', default=False, show_default=True,
+              help=f"download modules to the {click.style('modules', underline=True, italic=True)} subdirectory.")
+@click.option('--discussions', default=False, show_default=True,
+              help=f"download discussions to the {click.style('discussions', underline=True, italic=True)} subdirectory.")
+@click.option('--assignments', default=False, show_default=True,
+              help=f"download assignments to the {click.style('assignments', underline=True, italic=True)} subdirectory.")
+@click.option('--pages', default=False, show_default=True,
+              help=f"download pages to the {click.style('pages', underline=True, italic=True)} subdirectory.")
+@click.option('--files', default=False, show_default=True,
+              help=f"download files to the {click.style('files', underline=True, italic=True)} subdirectory.")
+@click.option('--announcements', default=False, show_default=True,
+              help=f"download announcements to the {click.style('announcements', underline=True, italic=True)} subdirectory.")
+@click.option('--all/--no-all', default=False, show_default=True, help="download all content to corresponding directories")
+@click.option("--target", default='.', show_default=True, help="download content parent directory.")
+def download_course_content(course_name, dryrun, modules, discussions, assignments, pages, files, announcements, all,
+                            target):
+    canvas = get_canvas_object()
+    course = get_course(canvas, course_name, is_active=False)
+    output(f"found {course.name}")
+
+    if all:
+        modules = discussions = assignments = pages = files = announcements = True
+
+    if not (modules or discussions or assignments or pages or files or announcements):
+        error("nothing selected to download")
+        exit(1)
+
+    if modules:
+        download_modules(course, os.path.join(target, 'modules'), dryrun)
+    if discussions:
+        download_discussions(course, os.path.join(target, 'discussions'), dryrun)
+    if assignments:
+        download_assignments(course, os.path.join(target, 'assignments'), dryrun)
+    if pages:
+        download_pages(course, os.path.join(target, 'pages'), dryrun)
+    if files:
+        download_files(course, os.path.join(target, 'files'), dryrun)
+    if announcements:
+        download_announcements(course, os.path.join(target, 'announcements'), dryrun)
 
 
 @canvas_tool.command()
