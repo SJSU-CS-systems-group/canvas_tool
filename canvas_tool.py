@@ -1,43 +1,42 @@
-import tempfile
-import zipfile
-
-from canvasapi import Canvas
-from canvasapi.course import Course
-from canvasapi.discussion_topic import DiscussionEntry
-from canvasapi.requester import Requester
-
-import mosspy
-
 import click
-from collections import defaultdict, namedtuple
-from configparser import ConfigParser
 import datetime
 import functools
 import glob
 import logging
-from html.parser import HTMLParser
+import mosspy
 import os
 import re
+import requests
 import shutil
 import string
 import sys
+import tempfile
 import urllib
 import urllib.request
+import zipfile
+from canvasapi import Canvas
+from canvasapi.course import Course
+from canvasapi.discussion_topic import DiscussionEntry
+from canvasapi.requester import Requester
+from collections import defaultdict, namedtuple
+from configparser import ConfigParser
+from html.parser import HTMLParser
 
-import requests
+course_name_matcher = r"((\S*): (\S+)\s.*)"
+course_name_formatter = r"\2:\3"
 
-course_name_matcher=r"((\S*): (\S+)\s.*)"
-course_name_formatter=r"\2:\3"
 
 def format_course_name(name, matcher=course_name_matcher, formatter=course_name_formatter):
     if formatter == '-':
         return name
     return re.sub(matcher, formatter, name)
 
+
 def introspect(o):
     print("class", o.__class__)
     for i in dir(o):
         print(i)
+
 
 # this file has the url and token we will use
 config_ini = click.get_app_dir("canvas_tool.ini")
@@ -73,6 +72,7 @@ def get_requester():
 access_token = None
 canvas_url = None
 
+
 def get_canvas_object():
     parser = ConfigParser()
     parser.read([config_ini])
@@ -99,9 +99,8 @@ def get_canvas_object():
 
 
 @click.group()
-@click.option("--log-level",
-    type=click.Choice(['CRITICAL','ERROR', 'WARNING', 'INFO', 'DEBUG'], case_sensitive=False),
-    help="set python logging level")
+@click.option("--log-level", type=click.Choice(['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'], case_sensitive=False),
+              help="set python logging level")
 def canvas_tool(log_level):
     if log_level:
         log_level_int = getattr(logging, log_level.upper())
@@ -111,7 +110,7 @@ def canvas_tool(log_level):
 
 def get_course(canvas, name, is_active=True) -> Course:
     ''' find one course based on partial match '''
-    course_list = get_courses(canvas, name, is_active) 
+    course_list = get_courses(canvas, name, is_active)
     if len(course_list) == 0:
         error(f'no courses found that contain {name}. options are:')
         for c in get_courses(canvas, "", is_active):
@@ -123,6 +122,7 @@ def get_course(canvas, name, is_active=True) -> Course:
             error(f"    {c.name}")
         sys.exit(2)
     return course_list[0]
+
 
 def get_courses(canvas: Canvas, name: str, is_active=True, is_finished=False) -> [Course]:
     ''' find the courses based on partial match '''
@@ -181,8 +181,9 @@ def maybe_a_word(word):
     if not vowels:
         return False
 
-    ratio = round(len(word)/len(vowels),1)
+    ratio = round(len(word) / len(vowels), 1)
     return 1.5 <= ratio <= 8.0
+
 
 class WordCounter(HTMLParser):
     def __init__(self):
@@ -198,18 +199,16 @@ class WordCounter(HTMLParser):
 
 
 def count_words(content):
-        wc = WordCounter()
-        wc.feed(content)
-        return wc.checked_word_count
-
-
+    wc = WordCounter()
+    wc.feed(content)
+    return wc.checked_word_count
 
 
 @canvas_tool.command()
 @click.argument('course_name', metavar='course')
 @click.argument('assignment_name', metavar='assignment', default='')
 @click.option('--dryrun/--no-dryrun', default=True, show_default=True,
-        help="only show the grade, don't actually set it")
+              help="only show the grade, don't actually set it")
 def download_submissions(course_name, assignment_name, dryrun):
     '''
     download submissions for an assignment.
@@ -230,7 +229,7 @@ def download_submissions(course_name, assignment_name, dryrun):
         }}
     }
     """
-    result = canvas.graphql(query,{"assignmentid": assignment.id})
+    result = canvas.graphql(query, {"assignmentid": assignment.id})
     submissions = result['data']['assignment']['submissionsConnection']['nodes']
 
     if dryrun:
@@ -263,7 +262,7 @@ def download_submissions(course_name, assignment_name, dryrun):
 @click.argument('assignment_name', metavar='assignment', default='')
 @click.argument('language', metavar='language')
 @click.option('--dryrun/--no-dryrun', default=True, show_default=True,
-        help="only show the grade, don't actually set it")
+              help="only show the grade, don't actually set it")
 def code_similarity(course_name, language, assignment_name, dryrun):
     '''
     check submissions for code similarity using stanford MOSS.
@@ -278,7 +277,7 @@ def code_similarity(course_name, language, assignment_name, dryrun):
     moss = mosspy.Moss(moss_userid, language)
     with tempfile.TemporaryDirectory("canvas_tool.attach") as tempdir:
         submissions = list(assignment.get_submissions())
-        with click.progressbar(length=len(submissions), label="downloading", item_show_func=lambda x:x) as bar:
+        with click.progressbar(length=len(submissions), label="downloading", item_show_func=lambda x: x) as bar:
             for sub in assignment.get_submissions():
                 if sub.user_id not in usermap:
                     continue
@@ -294,9 +293,10 @@ def code_similarity(course_name, language, assignment_name, dryrun):
                             zf.extractall(udir)
         moss.addFilesByWildcard(f"{tempdir}/**/*.{language}")
         count = len(moss.files)
-        with click.progressbar(length=count, label="uploading", item_show_func=lambda x:x) as bar:
+        with click.progressbar(length=count, label="uploading", item_show_func=lambda x: x) as bar:
             moss_url = moss.send(on_send=lambda fp, dn: bar.update(1, dn))
         print(moss_url)
+
 
 def download_attachment(basename, a):
     fname = a['displayName']
@@ -311,17 +311,15 @@ def download_attachment(basename, a):
             for chunk in response.iter_content():
                 fd.write(chunk)
 
+
 @canvas_tool.command()
 @click.argument('course_name', metavar='course')
 @click.argument('assignment_name', metavar='assignment', default='')
 @click.option('--dryrun/--no-dryrun', default=True, show_default=True,
-        help="only show the grade, don't actually set it")
-@click.option('--min-words', default=5, show_default=True,
-        help="the minimum number of valid words to get credit")
-@click.option('--points-comment', default=1, show_default=True,
-        help="number of points for posting a comment")
-@click.option('--max-points', default=2, show_default=True,
-        help="maximum number of points to give")
+              help="only show the grade, don't actually set it")
+@click.option('--min-words', default=5, show_default=True, help="the minimum number of valid words to get credit")
+@click.option('--points-comment', default=1, show_default=True, help="number of points for posting a comment")
+@click.option('--max-points', default=2, show_default=True, help="maximum number of points to give")
 def grade_discussion(course_name, assignment_name, dryrun, min_words, points_comment, max_points):
     '''
     grade a discussion assignment based on participation.
@@ -369,10 +367,11 @@ def grade_discussion(course_name, assignment_name, dryrun, min_words, points_com
             for entry in s.discussion_entries:
                 entry = DiscussionEntry(None, entry)
                 if entry.created_at_date > due_at_date:
-                    info(f"skipping discussion from {s.user_id} submitted at {entry.created_at_date} but due {due_at_date}")
+                    info(
+                        f"skipping discussion from {s.user_id} submitted at {entry.created_at_date} but due {due_at_date}")
                     continue
                 if count_words(entry.message) > 5:
-                    grade = min(grade+points_comment, max_points)
+                    grade = min(grade + points_comment, max_points)
 
             grades[s] = grade
 
@@ -398,9 +397,9 @@ def grade_discussion(course_name, assignment_name, dryrun, min_words, points_com
 @click.argument('quiz_name', default='')
 @click.argument('points', default=-666, type=float)
 @click.option('--dryrun/--no-dryrun', default=True, show_default=True,
-        help="only show the grade, don't actually set it")
+              help="only show the grade, don't actually set it")
 @click.option('--decrease/--no-decrease', default=False, show_default=True,
-    help='If not true, the fudge points will not be updated if new points < old points.')
+              help='If not true, the fudge points will not be updated if new points < old points.')
 def set_fudge_points(course_name, quiz_name, points, dryrun, decrease):
     '''
     set the fudge points for a quiz.
@@ -442,14 +441,12 @@ def set_fudge_points(course_name, quiz_name, points, dryrun, decrease):
 
 @canvas_tool.command()
 @click.option('--active/--inactive', default=True, help="show only active courses")
-@click.option('--matcher', default=course_name_matcher, show_default=True,
-              metavar="match_re_expression", help="course name regular expressions matcher")
-@click.option('--formatter', default=course_name_formatter, show_default=True,
-              metavar="format_re_expression", help="""
+@click.option('--matcher', default=course_name_matcher, show_default=True, metavar="match_re_expression",
+              help="course name regular expressions matcher")
+@click.option('--formatter', default=course_name_formatter, show_default=True, metavar="format_re_expression", help="""
               course name regular expressions formatter based on the matcher pattern.
               a format pattern of - will turn off formatting.
-              """
-             )
+              """)
 def list_courses(active, matcher, formatter):
     '''list courses i am teaching. --inactive will include past and future courses.'''
     canvas = get_canvas_object()
@@ -486,8 +483,7 @@ def list_students(course, active, emails):
 @click.option('--course-in-subject/--no-course-in-subject', show_default=True, default=True,
               help='include the course name in []s in the subject line')
 @click.option('--message', help="message to send")
-@click.option('--from-file', help="file containing message to send (- for stdin)",
-                             type=click.File('r'))
+@click.option('--from-file', help="file containing message to send (- for stdin)", type=click.File('r'))
 @click.argument('students', nargs=-1, required=True)
 def message_students(course, subject, message, course_in_subject, from_file, students):
     '''message students in a course'''
@@ -528,6 +524,7 @@ def message_students(course, subject, message, course_in_subject, from_file, stu
         # we set group_conversation to true to make sure it shows up as a new conversation
         canvas.create_conversation([user.id], message_to_send, subject=subject, group_conversation=True)
 
+
 def to_plus(grade, levels):
     """ convert a score to a list of pluses based on grade """
     pluses = ""
@@ -537,12 +534,13 @@ def to_plus(grade, levels):
     return pluses
 
 
-letter_grades = [(98, "A+"), (92, "A"), (90, "A-"),
-                 (88, "B+"), (82, "B"), (80, "B-"),
-                 (78, "C+"), (72, "C"), (70, "C-"),
-                 (68, "D+"), (62, "D"), (60, "D-"),
-                 (0, "F")]
+letter_grades = [(98, "A+"), (92, "A"), (90, "A-"), (88, "B+"), (82, "B"), (80, "B-"), (78, "C+"), (72, "C"),
+                 (70, "C-"), (68, "D+"), (62, "D"), (60, "D-"), (0, "F")]
+
+
 def points_to_letter(points, round):
+    if not points:
+        return 'WU'
     points += round
     for letter in letter_grades:
         if points >= letter[0]:
@@ -627,6 +625,7 @@ def export_letter_grade(course, csv_output_file):
 
     info(f"{count} records written to {csv_output_file.name}")
 
+
 def to_letter_grade(score):
     if score > 89:
         return 'A'
@@ -638,18 +637,17 @@ def to_letter_grade(score):
         return 'D'
     return 'F'
 
+
 @canvas_tool.command()
 @click.argument("course")
-@click.option('-m', 'min_grade', default=50.0, show_default=True,
-              help="""
+@click.option('-m', 'min_grade', default=50.0, show_default=True, help="""
               the minimum assignment grade. any score below this grade will be set to
               this minimum score.
-              """
-             )
+              """)
 def min_grade_analyzer(course, min_grade):
     '''see what the scores would look like with minimum grade'''
     canvas = get_canvas_object()
-    min_grade = min_grade/100
+    min_grade = min_grade / 100
     for course in get_courses(canvas, course, is_active=False, is_finished=True):
         # first get all the grade categories and track the ones with weights
         results = canvas.graphql('query { course(id: "' + str(course.id) + '''") {
@@ -674,8 +672,8 @@ def min_grade_analyzer(course, min_grade):
 
         grades_by_student = defaultdict(lambda: defaultdict(list))
         assignment_groups = [assignment_group for assignment_group in
-                             results['data']['course']['assignmentGroupsConnection']['nodes']
-                             if assignment_group['groupWeight']]
+                             results['data']['course']['assignmentGroupsConnection']['nodes'] if
+                             assignment_group['groupWeight']]
         weights = {}
         for assignment_group in assignment_groups:
             category = assignment_group['name']
@@ -715,42 +713,39 @@ def min_grade_analyzer(course, min_grade):
             components = []
             for (cat, scores) in assignments.items():
                 cat_total = sum([current_score for (current_score, points_possible) in scores])
-                min_scores = [(current_score
-                              if not points_possible or current_score >= points_possible*min_grade else points_possible*min_grade, points_possible)
-                              for (current_score, points_possible) in scores]
+                min_scores = [(
+                              current_score if not points_possible or current_score >= points_possible * min_grade else points_possible * min_grade,
+                              points_possible) for (current_score, points_possible) in scores]
                 min_cat_total = sum([current_score for (current_score, points_possible) in min_scores])
                 cat_possible = sum([points_possible for (current_score, points_possible) in scores])
                 if cat_possible == 0:
                     cat_possible = 100
-                cat_avg = cat_total/cat_possible
-                min_avg = min_cat_total/cat_possible
+                cat_avg = cat_total / cat_possible
+                min_avg = min_cat_total / cat_possible
                 inc = cat_avg * weights[cat]
                 min_inc = min_avg * weights[cat]
                 total += inc
                 min_total += min_inc
-                components.append((cat, cat_avg * 100))
-                #print(f'{scores} {cat_avg} {weights[cat]} {inc} {total} {min_total} {" " if total == min_total else "*****"}')
+                components.append((cat,
+                                   cat_avg * 100))  # print(f'{scores} {cat_avg} {weights[cat]} {inc} {total} {min_total} {" " if total == min_total else "*****"}')
             letter = to_letter_grade(total)
             min_letter = to_letter_grade(min_total)
             if letter != min_letter:
                 output(f'{name}@{class_grade_by_student[name]}@{total}({letter}) {min_total}({min_letter})')
 
+
 @canvas_tool.command()
 @click.argument("course")
-@click.option('-t', 'thresholds', metavar='threshold', multiple=True, default=[84,90,95],
-              show_default=True, type=click.INT,
-              help="""
+@click.option('-t', 'thresholds', metavar='threshold', multiple=True, default=[84, 90, 95], show_default=True,
+              type=click.INT, help="""
               assignment groups with grades about the lowest threshold will have a +, the next
               lowest gets ++, and so on. assignment groups below the lowest threshold will not
               be printed.
-              """
-             )
-@click.option('-s', 'skip', metavar='skip_assignment', multiple=True,
-              default=['iclickr', 'ungraded', 'imported'], show_default=True,
-              help="""
+              """)
+@click.option('-s', 'skip', metavar='skip_assignment', multiple=True, default=['iclickr', 'ungraded', 'imported'],
+              show_default=True, help="""
               assignment groups with the listed keywords will not be collected.
-              """
-             )
+              """)
 def collect_reference_info(course, thresholds, skip):
     '''collect high level information about students of previous classes to help writing reference letters'''
     Grade = namedtuple('Grade', ['category', 'grade'])
@@ -780,7 +775,7 @@ def collect_reference_info(course, thresholds, skip):
                     grades_by_student[name]
         for i in grades_by_student.items():
             label = f'{i[0]}@{format_course_name(course.name)}'
-            output(f'{label} {" ".join([g.category+":"+g.grade for g in i[1]])}')
+            output(f'{label} {" ".join([g.category + ":" + g.grade for g in i[1]])}')
 
 
 def print_config_ini_format(is_info):
