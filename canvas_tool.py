@@ -805,10 +805,50 @@ def sanitize(name):
     return name.replace(';', ',').replace("\n", "\\n").replace("\t", "\\t")
 
 
+ResourceRecord = namedtuple("ResourceRecord", ["id", "url", "type", "name"])
+
+# rr4name and rr4id will have the ResourceRecord type prepended
+rr4name = {}
+rr4id = {}
+rr4url = {}
+
+
+def process_resource_record(rr):
+    rr4name[rr.type + rr.name] = rr
+    rr4id[rr.type + str(rr.id)] = rr
+    rr4url[rr.url] = rr
+
+
+# strip any query params off (in different places the same url will have different params
+def base_url(url):
+    return url.split("?")[0]
+
+
+def map_course_resource_records(course):
+    for folder in course.get_folders():
+        for file in folder.get_files():
+            process_resource_record(
+                ResourceRecord(file.id, base_url(file.url), "File", os.path.join(str(folder), str(file))))
+
+    for assignment in course.get_assignments():
+        process_resource_record(
+            ResourceRecord(assignment.id, base_url(assignment.html_url), "Assignment", assignment.name))
+    for discussion in course.get_discussion_topics():
+        process_resource_record(
+            ResourceRecord(discussion.id, base_url(discussion.html_url), "Discussion", discussion.title))
+    for page in course.get_pages():
+        process_resource_record(ResourceRecord(page.page_id, base_url(page.html_url), "Page", page.title))
+    for quiz in course.get_quizzes():
+        process_resource_record(ResourceRecord(quiz.id, base_url(quiz.html_url), "Quiz", quiz.title))
+
+
 def download_modules(course, target, dryrun):
     def get_name_from_url(url):
-        json = get_requester().request("GET", _url=url).json()
-        return sanitize(json['title'] if 'title' in json else json['name']);
+        # super hacky!!! for some reason /api/v1 is in the module url but not in the url of the objects
+        url = url.replace("/api/v1", "")
+        if url not in rr4url:
+            error(f"{url} is not in {rr4url.keys()}")
+        return sanitize(rr4url[base_url(url)].name)
 
     def base_inner_module_to_str(module_item):
         return f'{"  " * (module_item.indent + 1)}* {sanitize(module_item.title)}{"" if module_item.published else "; !published"}'
@@ -937,6 +977,7 @@ def download_course_content(course_name, dryrun, modules, discussions, assignmen
     canvas = get_canvas_object()
     course = get_course(canvas, course_name, is_active=False)
     output(f"found {course.name}")
+    map_course_resource_records(course)
 
     if all:
         modules = discussions = assignments = pages = files = announcements = True
