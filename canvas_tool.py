@@ -800,8 +800,62 @@ def check_key(key, obj):
     return obj[key]
 
 
+# very simple sanitizer to escape semicolons, tabs, and newlines
+def sanitize(name):
+    return name.replace(';', ',').replace("\n", "\\n").replace("\t", "\\t")
+
+
 def download_modules(course, target, dryrun):
-    pass
+    def get_name_from_url(url):
+        json = get_requester().request("GET", _url=url).json()
+        return sanitize(json['title'] if 'title' in json else json['name']);
+
+    def base_inner_module_to_str(module_item):
+        return f'{"  " * (module_item.indent + 1)}* {sanitize(module_item.title)}{"" if module_item.published else "; !published"}'
+
+    def named_inner_module_to_str(module_item):
+        return f'{base_inner_module_to_str(module_item)}; {module_item.type}: {get_name_from_url(module_item.url)}'
+
+    module_renderers = {
+        "Assignment": named_inner_module_to_str,
+        "Page": named_inner_module_to_str,
+        "Quiz": named_inner_module_to_str,
+        "Discussion": named_inner_module_to_str,
+        "SubHeader": base_inner_module_to_str,
+        "ExternalUrl": lambda
+            mi: f'{base_inner_module_to_str(mi)}; ExternalUrl; {"" if mi.new_tab else "!"}newtab; {mi.external_url}',
+        "ExternalTool": lambda
+            mi: f'{base_inner_module_to_str(mi)}; ExternalTool; {"" if mi.new_tab else "!"}newtab; {mi.url}; {mi.external_url}',
+    }
+
+    top_modules = []
+    id2name = {}
+    output = ''
+    for module in course.get_modules():
+        id2name[module.id] = module.name
+        ms = f"# {module.name}"
+        if module.unlock_at:
+            ms += f"; unlock={module.unlock_at}"
+        if module.require_sequential_progress:
+            ms += f"; sequential"
+        if module.prerequisite_module_ids:
+            ms += f"; prereqs={','.join([id2name[id] for id in module.prerequisite_module_ids])}"
+        if module.completed_at:
+            ms += f"; completed={module.completed_at}"
+        if not module.published:
+            ms += f"; !published"
+        output += ms + '\n'
+        for item in module.get_module_items():
+            if item.type in module_renderers:
+                output += module_renderers[item.type](item) + '\n'
+            else:
+                warn(f"cannot render {item.__dict__}")
+
+    if dryrun:
+        info(f"would have written:\n{output}to {target}")
+    else:
+        with open(target, "w") as fd:
+            fd.write(output)
 
 
 def download_discussions(course, target, dryrun):
@@ -863,8 +917,8 @@ def download_announcements(course, target, dryrun):
 @canvas_tool.command()
 @click.argument('course_name', metavar='course')
 @click.option('--dryrun/--no-dryrun', default=True, show_default=True, help="show what would happen, but don't do it.")
-@click.option('--modules', default=False, show_default=True,
-              help=f"download modules to the {click.style('modules', underline=True, italic=True)} subdirectory.")
+@click.option('--modules/--no-modules', default=False, show_default=True,
+              help=f"download modules to the {click.style('modules', underline=True, italic=True)} file.")
 @click.option('--discussions', default=False, show_default=True,
               help=f"download discussions to the {click.style('discussions', underline=True, italic=True)} subdirectory.")
 @click.option('--assignments', default=False, show_default=True,
