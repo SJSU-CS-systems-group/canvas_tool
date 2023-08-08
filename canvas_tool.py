@@ -820,6 +820,7 @@ def download_files(course, target, dryrun):
     class ToDownload(NamedTuple):
         file: canvasapi.file.File
         target: str
+
     error_seen = False
     to_download = []
     for folder in course.get_folders():
@@ -847,10 +848,14 @@ def download_files(course, target, dryrun):
                     to_download.append(ToDownload(file, target_file))
 
     if to_download:
-        with click.progressbar(to_download, label="downloading") as tds:
+        with click.progressbar(to_download, label="downloading",
+                               item_show_func=lambda i: str(i.file) if i else "") as tds:
             for td in tds:
-                print(f" {td.file}", end='', flush=True)
                 td.file.download(td.target)
+    if error_seen:
+        exit(2)
+
+
 def download_announcements(course, target, dryrun):
     pass
 
@@ -870,7 +875,8 @@ def download_announcements(course, target, dryrun):
               help=f"download files to the {click.style('files', underline=True, italic=True)} subdirectory.")
 @click.option('--announcements', default=False, show_default=True,
               help=f"download announcements to the {click.style('announcements', underline=True, italic=True)} subdirectory.")
-@click.option('--all/--no-all', default=False, show_default=True, help="download all content to corresponding directories")
+@click.option('--all/--no-all', default=False, show_default=True,
+              help="download all content to corresponding directories")
 @click.option("--target", default='.', show_default=True, help="download content parent directory.")
 def download_course_content(course_name, dryrun, modules, discussions, assignments, pages, files, announcements, all,
                             target):
@@ -897,6 +903,97 @@ def download_course_content(course_name, dryrun, modules, discussions, assignmen
         download_files(course, os.path.join(target, 'files'), dryrun)
     if announcements:
         download_announcements(course, os.path.join(target, 'announcements'), dryrun)
+
+
+def upload_modules(course, target, dryrun):
+    pass
+
+
+def upload_discussions(course, target, dryrun):
+    pass
+
+
+def upload_assignments(course, target, dryrun):
+    pass
+
+
+def upload_pages(course, target, dryrun):
+    pass
+
+
+def upload_files(course, target, dryrun):
+    to_upload = set([os.path.join(d, f)[len(target) + 1:] for (d, sds, fs) in os.walk(target) for f in fs])
+
+    existing_files = set()
+    for folder in course.get_folders():
+        for file in folder.get_files():
+            existing_files.add(os.path.join(str(folder), str(file)))
+
+    for common in to_upload.intersection(existing_files):
+        warn(f"{common} already exists. skipping.")
+
+    uploads = list(to_upload.difference(existing_files))
+    if dryrun:
+        for up in uploads:
+            name = os.path.basename(up)
+            parent = os.path.dirname(up)
+            info(f"would upload {name} to {parent}")
+    else:
+        with click.progressbar(uploads, label="uploading",
+                               item_show_func=lambda i: i if i else "") as ups:
+            for up in ups:
+                name = os.path.basename(up)
+                parent = os.path.dirname(up)
+                course.upload(os.path.join(target, up), parent_folder_path=parent, name=name)
+
+
+def upload_announcements(course, target, dryrun):
+    pass
+
+
+@canvas_tool.command()
+@click.argument('course_name', metavar='course')
+@click.option('--dryrun/--no-dryrun', default=True, show_default=True, help="show what would happen, but don't do it.")
+@click.option('--modules', default=False, show_default=True,
+              help=f"upload modules to the {click.style('modules', underline=True, italic=True)} subdirectory.")
+@click.option('--discussions', default=False, show_default=True,
+              help=f"upload discussions to the {click.style('discussions', underline=True, italic=True)} subdirectory.")
+@click.option('--assignments', default=False, show_default=True,
+              help=f"upload assignments to the {click.style('assignments', underline=True, italic=True)} subdirectory.")
+@click.option('--pages', default=False, show_default=True,
+              help=f"upload pages to the {click.style('pages', underline=True, italic=True)} subdirectory.")
+@click.option('--files', default=False, show_default=True,
+              help=f"upload files to the {click.style('files', underline=True, italic=True)} subdirectory.")
+@click.option('--announcements', default=False, show_default=True,
+              help=f"upload announcements to the {click.style('announcements', underline=True, italic=True)} subdirectory.")
+@click.option('--all/--no-all', default=False, show_default=True,
+              help="upload all content to corresponding directories")
+@click.option("--target", default='.', show_default=True, help="upload content parent directory.")
+def upload_course_content(course_name, dryrun, modules, discussions, assignments, pages, files, announcements, all,
+                          target):
+    canvas = get_canvas_object()
+    course = get_course(canvas, course_name, is_active=False)
+    output(f"found {course.name}")
+
+    if all:
+        modules = discussions = assignments = pages = files = announcements = True
+
+    if not (modules or discussions or assignments or pages or files or announcements):
+        error("nothing selected to upload")
+        exit(1)
+
+    if modules:
+        upload_modules(course, os.path.join(target, 'modules'), dryrun)
+    if discussions:
+        upload_discussions(course, os.path.join(target, 'discussions'), dryrun)
+    if assignments:
+        upload_assignments(course, os.path.join(target, 'assignments'), dryrun)
+    if pages:
+        upload_pages(course, os.path.join(target, 'pages'), dryrun)
+    if files:
+        upload_files(course, os.path.join(target, 'files'), dryrun)
+    if announcements:
+        upload_announcements(course, os.path.join(target, 'announcements'), dryrun)
 
 
 @canvas_tool.command()
