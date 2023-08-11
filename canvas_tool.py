@@ -811,6 +811,7 @@ ResourceRecord = namedtuple("ResourceRecord", ["id", "url", "type", "name"])
 rr4name = {}
 rr4id = {}
 rr4url = {}
+course_modules = {}
 
 
 def process_resource_record(rr):
@@ -825,21 +826,29 @@ def base_url(url):
 
 
 def map_course_resource_records(course):
-    for folder in course.get_folders():
-        for file in folder.get_files():
+    with click.progressbar(length=6, label="mapping existing resources") as bar:
+        for folder in course.get_folders():
+            for file in folder.get_files():
+                process_resource_record(
+                    ResourceRecord(file.id, base_url(file.url), "File", os.path.join(str(folder), str(file))))
+        bar.update(1)
+        for assignment in course.get_assignments():
             process_resource_record(
-                ResourceRecord(file.id, base_url(file.url), "File", os.path.join(str(folder), str(file))))
-
-    for assignment in course.get_assignments():
-        process_resource_record(
-            ResourceRecord(assignment.id, base_url(assignment.html_url), "Assignment", assignment.name))
-    for discussion in course.get_discussion_topics():
-        process_resource_record(
-            ResourceRecord(discussion.id, base_url(discussion.html_url), "Discussion", discussion.title))
-    for page in course.get_pages():
-        process_resource_record(ResourceRecord(page.page_id, base_url(page.html_url), "Page", page.title))
-    for quiz in course.get_quizzes():
-        process_resource_record(ResourceRecord(quiz.id, base_url(quiz.html_url), "Quiz", quiz.title))
+                ResourceRecord(assignment.id, base_url(assignment.html_url), "Assignment", assignment.name))
+        bar.update(1)
+        for discussion in course.get_discussion_topics():
+            process_resource_record(
+                ResourceRecord(discussion.id, base_url(discussion.html_url), "Discussion", discussion.title))
+        bar.update(1)
+        for page in course.get_pages():
+            process_resource_record(ResourceRecord(page.page_id, base_url(page.html_url), "Page", page.title))
+        bar.update(1)
+        for quiz in course.get_quizzes():
+            process_resource_record(ResourceRecord(quiz.id, base_url(quiz.html_url), "Quiz", quiz.title))
+        bar.update(1)
+        for mod in course.get_modules():
+            course_modules[mod.name] = list(mod.get_module_items())
+        bar.update(1)
 
 
 def download_modules(course, target, dryrun):
@@ -851,21 +860,32 @@ def download_modules(course, target, dryrun):
         return sanitize(rr4url[base_url(url)].name)
 
     def base_inner_module_to_str(module_item):
-        return f'{"  " * (module_item.indent + 1)}* {sanitize(module_item.title)}{"" if module_item.published else "; !published"}'
+        return f'{"  " * (module_item.indent + 1)}* {sanitize(module_item.title)}; {module_item.type}{"" if module_item.published else "; published=False"}'
 
     def named_inner_module_to_str(module_item):
-        return f'{base_inner_module_to_str(module_item)}; {module_item.type}: {get_name_from_url(module_item.url)}'
+        module_item_target_name = None
+        if hasattr(module_item, 'content_id'):
+            module_item_target_name = rr4id[module_item.type + str(module_item.content_id)].name
+        else:
+            module_item_target_name = get_name_from_url(module_item.url)
+
+        if module_item_target_name == module_item.title:
+            module_item_target_name = None
+
+        return f'{base_inner_module_to_str(module_item)}{f"; target={module_item_target_name}" if module_item_target_name else ""}'
+
+    def external_tool(mi):
+        return f'{base_inner_module_to_str(mi)}; newtab={"True" if mi.new_tab else "False"}; url={mi.external_url}'
 
     module_renderers = {
         "Assignment": named_inner_module_to_str,
+        "File": named_inner_module_to_str,
         "Page": named_inner_module_to_str,
         "Quiz": named_inner_module_to_str,
         "Discussion": named_inner_module_to_str,
         "SubHeader": base_inner_module_to_str,
-        "ExternalUrl": lambda
-            mi: f'{base_inner_module_to_str(mi)}; ExternalUrl; {"" if mi.new_tab else "!"}newtab; {mi.external_url}',
-        "ExternalTool": lambda
-            mi: f'{base_inner_module_to_str(mi)}; ExternalTool; {"" if mi.new_tab else "!"}newtab; {mi.url}; {mi.external_url}',
+        "ExternalUrl": external_tool,
+        "ExternalTool": external_tool,
     }
 
     top_modules = []
@@ -883,7 +903,7 @@ def download_modules(course, target, dryrun):
         if module.completed_at:
             ms += f"; completed={module.completed_at}"
         if not module.published:
-            ms += f"; !published"
+            ms += f"; published=False"
         output += ms + '\n'
         for item in module.get_module_items():
             if item.type in module_renderers:
@@ -1000,8 +1020,43 @@ def download_course_content(course_name, dryrun, modules, discussions, assignmen
         download_announcements(course, os.path.join(target, 'announcements'), dryrun)
 
 
-def upload_modules(course, target, dryrun):
-    pass
+def upload_modules(course, source, dryrun):
+    last_module_seen = None
+    last_module_item_names = set()
+    with open(source, "r") as fd:
+        for line in fd.readlines():
+            m = re.match(r"^((  )+) ?\*\s+([^;]+)(;(.*)$)?", line)
+            if line.startswith("# "):
+                parts = line[2:].strip().split(";")
+                title = parts[0]
+                if title in course_modules:
+                    last_module_item_names = set([mi.title for mi in course_modules[title]])
+                    info(f"{title} module already present")
+                elif dryrun:
+                    info(f"would create {title} module")
+                else:
+                    info(f"creating {title} module")
+                    last_module_seen = course.create_module(title, published=line.find("!published") == -1)
+                    course_modules[title] = []
+                    last_module_item_names = set()
+            elif m:
+                indent_level = len(m.group(1)) / 2
+                item_title = m.group(3)
+                item_options = m.group(5)
+
+                if item_title in last_module_item_names:
+                    info(f"item {item_title} present in {title}")
+                elif dryrun:
+                    info(f"would create item {item_title} in {title}")
+                else:
+                    info(f"creating {item_title} in {title}")
+                    item_dict = {"title": item_title, "indent": indent_level - 1}
+                    item_attributes = [ia.strip() for ia in item_options.split(';')] if item_options else [None]
+                    item_type = item_attributes[1] if len(item_attributes) > 1 else "SubHeader"
+                    item_dict["type"] = item_type
+                    if item_type in ["Assignment", "Discussion", "File", "Page", "Quiz"]:
+                        pass
+                        # if rr4name[item_type+item_name]
 
 
 def upload_discussions(course, target, dryrun):
@@ -1049,7 +1104,7 @@ def upload_announcements(course, target, dryrun):
 @canvas_tool.command()
 @click.argument('course_name', metavar='course')
 @click.option('--dryrun/--no-dryrun', default=True, show_default=True, help="show what would happen, but don't do it.")
-@click.option('--modules', default=False, show_default=True,
+@click.option('--modules/--no-modules', default=False, show_default=True,
               help=f"upload modules to the {click.style('modules', underline=True, italic=True)} subdirectory.")
 @click.option('--discussions', default=False, show_default=True,
               help=f"upload discussions to the {click.style('discussions', underline=True, italic=True)} subdirectory.")
@@ -1063,12 +1118,13 @@ def upload_announcements(course, target, dryrun):
               help=f"upload announcements to the {click.style('announcements', underline=True, italic=True)} subdirectory.")
 @click.option('--all/--no-all', default=False, show_default=True,
               help="upload all content to corresponding directories")
-@click.option("--target", default='.', show_default=True, help="upload content parent directory.")
+@click.option("--source", default='.', show_default=True, help="upload content parent directory.")
 def upload_course_content(course_name, dryrun, modules, discussions, assignments, pages, files, announcements, all,
-                          target):
+                          source):
     canvas = get_canvas_object()
     course = get_course(canvas, course_name, is_active=False)
     output(f"found {course.name}")
+    map_course_resource_records(course)
 
     if all:
         modules = discussions = assignments = pages = files = announcements = True
@@ -1078,17 +1134,17 @@ def upload_course_content(course_name, dryrun, modules, discussions, assignments
         exit(1)
 
     if modules:
-        upload_modules(course, os.path.join(target, 'modules'), dryrun)
+        upload_modules(course, os.path.join(source, 'modules'), dryrun)
     if discussions:
-        upload_discussions(course, os.path.join(target, 'discussions'), dryrun)
+        upload_discussions(course, os.path.join(source, 'discussions'), dryrun)
     if assignments:
-        upload_assignments(course, os.path.join(target, 'assignments'), dryrun)
+        upload_assignments(course, os.path.join(source, 'assignments'), dryrun)
     if pages:
-        upload_pages(course, os.path.join(target, 'pages'), dryrun)
+        upload_pages(course, os.path.join(source, 'pages'), dryrun)
     if files:
-        upload_files(course, os.path.join(target, 'files'), dryrun)
+        upload_files(course, os.path.join(source, 'files'), dryrun)
     if announcements:
-        upload_announcements(course, os.path.join(target, 'announcements'), dryrun)
+        upload_announcements(course, os.path.join(source, 'announcements'), dryrun)
 
 
 @canvas_tool.command()
