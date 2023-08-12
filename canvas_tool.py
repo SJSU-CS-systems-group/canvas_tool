@@ -106,7 +106,6 @@ def get_canvas_object():
 def canvas_tool(log_level):
     if log_level:
         log_level_int = getattr(logging, log_level.upper())
-        print(log_level_int)
         logging.basicConfig(level=log_level_int)
 
 
@@ -728,8 +727,8 @@ def min_grade_analyzer(course, min_grade):
                 min_inc = min_avg * weights[cat]
                 total += inc
                 min_total += min_inc
-                components.append((cat,
-                                   cat_avg * 100))  # print(f'{scores} {cat_avg} {weights[cat]} {inc} {total} {min_total} {" " if total == min_total else "*****"}')
+                components.append((cat,cat_avg * 100))
+                # print(f'{scores} {cat_avg} {weights[cat]} {inc} {total} {min_total} {" " if total == min_total else "*****"}')
             letter = to_letter_grade(total)
             min_letter = to_letter_grade(min_total)
             if letter != min_letter:
@@ -805,7 +804,7 @@ def sanitize(name):
     return name.replace(';', ',').replace("\n", "\\n").replace("\t", "\\t")
 
 
-ResourceRecord = namedtuple("ResourceRecord", ["id", "url", "type", "name"])
+ResourceRecord = namedtuple("ResourceRecord", ["id", "url", "type", "name", "stub"])
 
 # rr4name and rr4id will have the ResourceRecord type prepended
 rr4name = {}
@@ -830,35 +829,28 @@ def map_course_resource_records(course):
         for folder in course.get_folders():
             for file in folder.get_files():
                 process_resource_record(
-                    ResourceRecord(file.id, base_url(file.url), "File", os.path.join(str(folder), str(file))))
+                    ResourceRecord(file.id, base_url(file.url), "File", os.path.join(str(folder), str(file)).replace("\\", "/"), file.size == 0))
         bar.update(1)
         for assignment in course.get_assignments():
             process_resource_record(
-                ResourceRecord(assignment.id, base_url(assignment.html_url), "Assignment", assignment.name))
+                ResourceRecord(assignment.id, base_url(assignment.html_url), "Assignment", assignment.name, not assignment.description))
         bar.update(1)
         for discussion in course.get_discussion_topics():
             process_resource_record(
-                ResourceRecord(discussion.id, base_url(discussion.html_url), "Discussion", discussion.title))
+                ResourceRecord(discussion.id, base_url(discussion.html_url), "Discussion", discussion.title, not discussion.message))
         bar.update(1)
-        for page in course.get_pages():
-            process_resource_record(ResourceRecord(page.page_id, base_url(page.html_url), "Page", page.title))
+        for page in course.get_pages(include=["body"]):
+            process_resource_record(ResourceRecord(page.page_id, base_url(page.url), "Page", page.title, not page.body))
         bar.update(1)
         for quiz in course.get_quizzes():
-            process_resource_record(ResourceRecord(quiz.id, base_url(quiz.html_url), "Quiz", quiz.title))
+            process_resource_record(ResourceRecord(quiz.id, base_url(quiz.html_url), "Quiz", quiz.title, not quiz.description))
         bar.update(1)
         for mod in course.get_modules():
-            course_modules[mod.name] = list(mod.get_module_items())
+            course_modules[mod.name] = mod
         bar.update(1)
 
 
 def download_modules(course, target, dryrun):
-    def get_name_from_url(url):
-        # super hacky!!! for some reason /api/v1 is in the module url but not in the url of the objects
-        url = url.replace("/api/v1", "")
-        if url not in rr4url:
-            error(f"{url} is not in {rr4url.keys()}")
-        return sanitize(rr4url[base_url(url)].name)
-
     def base_inner_module_to_str(module_item):
         return f'{"  " * (module_item.indent + 1)}* {sanitize(module_item.title)}; {module_item.type}{"" if module_item.published else "; published=False"}'
 
@@ -867,7 +859,7 @@ def download_modules(course, target, dryrun):
         if hasattr(module_item, 'content_id'):
             module_item_target_name = rr4id[module_item.type + str(module_item.content_id)].name
         else:
-            module_item_target_name = get_name_from_url(module_item.url)
+            module_item_target_name = rr4url[module_item.page_url].name
 
         if module_item_target_name == module_item.title:
             module_item_target_name = None
@@ -1020,6 +1012,52 @@ def download_course_content(course_name, dryrun, modules, discussions, assignmen
         download_announcements(course, os.path.join(target, 'announcements'), dryrun)
 
 
+def boolean_option(key, params):
+    return params[key].lower() == "true" if key in params else False
+
+
+def create_assignment(course, name, description=""):
+    rc = course.create_assignment({"name": name, "description": description})
+    process_resource_record(ResourceRecord(rc.id, base_url(rc.html_url), "Assignment", name, not description))
+    return rc
+
+def create_discussion(course, name, message=""):
+    rc = course.create_discussion_topic(title=name, message=message)
+    process_resource_record(ResourceRecord(rc.id, base_url(rc.html_url), "Discussion", name, not message))
+    return rc
+
+def create_file(course, name, content=b''):
+    last_slash = name.rindex("/")
+    file = name[last_slash+1:]
+    parent = name[0:last_slash] if last_slash != -1 else ""
+    rc = course.upload(content, parent_folder_path=parent, name=file)
+    process_resource_record(ResourceRecord(rc[1].id, base_url(rc[1].url), "File", name, not content))
+    return rc[1]
+
+def create_quiz(course, name, description=''):
+    rc = course.create_quiz({"title": name, "description": description})
+    process_resource_record(ResourceRecord(rc.id, base_url(rc.html_url), "Quiz", name, not description))
+    return rc
+
+def create_stub(course, item_type, item_name):
+    if item_type =="Assignment":
+        return create_assignment(course, item_name)
+    if item_type == "Discussion":
+        return create_discussion(course, item_name)
+    if item_type == "File":
+        return create_file(course, item_name)
+    if item_type == "Quiz":
+        return create_quiz(course, item_name)
+
+
+def create_page(course, title, body = None):
+    page_dict = {"title": title}
+    if body:
+        page_dict["body"] = body
+    rc = course.create_page(page_dict)
+    return rc
+
+
 def upload_modules(course, source, dryrun):
     last_module_seen = None
     last_module_item_names = set()
@@ -1027,36 +1065,58 @@ def upload_modules(course, source, dryrun):
         for line in fd.readlines():
             m = re.match(r"^((  )+) ?\*\s+([^;]+)(;(.*)$)?", line)
             if line.startswith("# "):
-                parts = line[2:].strip().split(";")
+                parts = line[2:].strip().split(";", 2)
                 title = parts[0]
                 if title in course_modules:
-                    last_module_item_names = set([mi.title for mi in course_modules[title]])
+                    last_module_seen = course_modules[title]
+                    last_module_item_names = set([mi.title for mi in course_modules[title].get_module_items()])
                     info(f"{title} module already present")
                 elif dryrun:
                     info(f"would create {title} module")
                 else:
                     info(f"creating {title} module")
-                    last_module_seen = course.create_module(title, published=line.find("!published") == -1)
-                    course_modules[title] = []
+                    last_module_seen = course.create_module({"name": title, "published": boolean_option("published", extract_options(parts[1])) if len(parts) > 1 else True})
+                    course_modules[title] = last_module_seen
                     last_module_item_names = set()
             elif m:
                 indent_level = len(m.group(1)) / 2
                 item_title = m.group(3)
-                item_options = m.group(5)
-
+                item_parts = m.group(5).split(';', 1)
+                item_options = extract_options(item_parts[1]) if len(item_parts) > 1 else {}
+                item_type = item_parts[0].strip()
                 if item_title in last_module_item_names:
                     info(f"item {item_title} present in {title}")
                 elif dryrun:
                     info(f"would create item {item_title} in {title}")
                 else:
                     info(f"creating {item_title} in {title}")
-                    item_dict = {"title": item_title, "indent": indent_level - 1}
-                    item_attributes = [ia.strip() for ia in item_options.split(';')] if item_options else [None]
-                    item_type = item_attributes[1] if len(item_attributes) > 1 else "SubHeader"
-                    item_dict["type"] = item_type
-                    if item_type in ["Assignment", "Discussion", "File", "Page", "Quiz"]:
-                        pass
-                        # if rr4name[item_type+item_name]
+                    item_dict = {"title": item_title, "indent": indent_level - 1, "type": item_type}
+                    if "newtab" in item_options:
+                        item_dict["newtab"] = boolean_option("newtab", item_options)
+                    item_name = item_options["target"] if "target" in item_options else item_title
+                    if item_type in ["Assignment", "Discussion", "File", "Quiz"]:
+                        item_name = item_options["target"] if "target" in item_options else item_title
+                        name_key = item_type+item_name
+                        item_dict["content_id"] = rr4name[name_key].id if name_key in rr4name else create_stub(course, item_type, item_name).id
+                    elif item_type == "Page":
+                        url = page_name_to_url(item_name)
+                        create_page(course, item_name)
+                        item_dict["page_url"] = url
+                    elif item_type.startswith("External"):
+                        item_dict["external_url"] = item_options["url"]
+                    if item_type == "ExternalTool":
+                        error("ExternalTool creation not currently supported")
+                    else:
+                        last_module_seen.create_module_item(item_dict)
+                        last_module_item_names.add(item_title)
+
+
+def page_name_to_url(item_name):
+    return item_name.lower().replace(" ", "-")
+
+
+def extract_options(options):
+    return {s[0].strip().lower(): s[1].strip() if len(s) > 1 else "" for s in [o.split('=', 2) for o in options.split(';')]}
 
 
 def upload_discussions(course, target, dryrun):
@@ -1072,13 +1132,13 @@ def upload_pages(course, target, dryrun):
 
 
 def upload_files(course, target, dryrun):
-    to_upload = set([os.path.join(d, f)[len(target) + 1:] for (d, sds, fs) in os.walk(target) for f in fs])
+    # got to watch out for windows \\ when using join!
+    to_upload = set([os.path.join(d, f)[len(target) + 1:].replace("\\", "/") for (d, sds, fs) in os.walk(target) for f in fs])
 
     existing_files = set()
     for folder in course.get_folders():
         for file in folder.get_files():
-            existing_files.add(os.path.join(str(folder), str(file)))
-
+            existing_files.add(os.path.join(str(folder), str(file)).replace("\\", "/"))
     for common in to_upload.intersection(existing_files):
         warn(f"{common} already exists. skipping.")
 
@@ -1094,7 +1154,9 @@ def upload_files(course, target, dryrun):
             for up in ups:
                 name = os.path.basename(up)
                 parent = os.path.dirname(up)
-                course.upload(os.path.join(target, up), parent_folder_path=parent, name=name)
+                filename = os.path.join(target, up)
+                if os.stat(filename).st_size > 0:
+                    course.upload(os.path.join(target, up), parent_folder_path=parent, name=name)
 
 
 def upload_announcements(course, target, dryrun):
