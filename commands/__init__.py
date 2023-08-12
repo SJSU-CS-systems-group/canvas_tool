@@ -1,6 +1,7 @@
 __all__ = [
     "code_similarity",
     "collect_reference_info",
+    "download_canvas_course",
     "download_submissions",
     "export_letter_grade",
     "grade_discussion",
@@ -11,5 +12,5 @@ __all__ = [
     "min_grade_analyzer",
     "set_fudge_points",
     "set_letter_grade",
-    "upload_download_canvas_course",
+    "upload_canvas_course",
 ]
