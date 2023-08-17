@@ -45,7 +45,7 @@ def download_modules(course, target, dryrun):
             ms += f"; sequential"
         if module.prerequisite_module_ids:
             ms += f"; prereqs={','.join([id2name[id] for id in module.prerequisite_module_ids])}"
-        if module.completed_at:
+        if hasattr(module, "completed_at") and module.completed_at:
             ms += f"; completed={module.completed_at}"
         if not module.published:
             ms += f"; published=False"

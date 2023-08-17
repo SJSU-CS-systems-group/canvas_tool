@@ -1,6 +1,5 @@
 from core import *
 
-print("registering grad_discussion")
 @canvas_tool.command()
 @click.argument('course_name', metavar='course')
 @click.argument('assignment_name', metavar='assignment', default='')
