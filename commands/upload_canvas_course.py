@@ -1,4 +1,7 @@
+from canvasapi.page import Page
+
 from core import *
+from md2fhtml import md2htmlstr
 
 
 def boolean_option(key, params):
@@ -10,26 +13,30 @@ def create_assignment(course, name, description=""):
     process_resource_record(ResourceRecord(rc.id, base_url(rc.html_url), "Assignment", name, not description))
     return rc
 
+
 def create_discussion(course, name, message=""):
     rc = course.create_discussion_topic(title=name, message=message)
     process_resource_record(ResourceRecord(rc.id, base_url(rc.html_url), "Discussion", name, not message))
     return rc
 
+
 def create_file(course, name, content=b''):
     last_slash = name.rindex("/")
-    file = name[last_slash+1:]
+    file = name[last_slash + 1:]
     parent = name[0:last_slash] if last_slash != -1 else ""
     rc = course.upload(content, parent_folder_path=parent, name=file)
     process_resource_record(ResourceRecord(rc[1].id, base_url(rc[1].url), "File", name, not content))
     return rc[1]
+
 
 def create_quiz(course, name, description=''):
     rc = course.create_quiz({"title": name, "description": description})
     process_resource_record(ResourceRecord(rc.id, base_url(rc.html_url), "Quiz", name, not description))
     return rc
 
+
 def create_stub(course, item_type, item_name):
-    if item_type =="Assignment":
+    if item_type == "Assignment":
         return create_assignment(course, item_name)
     if item_type == "Discussion":
         return create_discussion(course, item_name)
@@ -39,11 +46,12 @@ def create_stub(course, item_type, item_name):
         return create_quiz(course, item_name)
 
 
-def create_page(course, title, body = None):
+def create_page(course, title, body=None):
     page_dict = {"title": title}
     if body:
         page_dict["body"] = body
     rc = course.create_page(page_dict)
+    process_resource_record(ResourceRecord(rc.page_id, rc.url, "Page", title, not body))
     return rc
 
 
@@ -64,7 +72,11 @@ def upload_modules(course, source, dryrun):
                     info(f"would create {title} module")
                 else:
                     info(f"creating {title} module")
-                    last_module_seen = course.create_module({"name": title, "published": boolean_option("published", extract_options(parts[1])) if len(parts) > 1 else True})
+                    last_module_seen = course.create_module({"name": title, "published": boolean_option("published",
+                                                                                                        extract_options(
+                                                                                                            parts[
+                                                                                                                1])) if len(
+                        parts) > 1 else True})
                     course_modules[title] = last_module_seen
                     last_module_item_names = set()
             elif m:
@@ -85,8 +97,10 @@ def upload_modules(course, source, dryrun):
                     item_name = item_options["target"] if "target" in item_options else item_title
                     if item_type in ["Assignment", "Discussion", "File", "Quiz"]:
                         item_name = item_options["target"] if "target" in item_options else item_title
-                        name_key = item_type+item_name
-                        item_dict["content_id"] = rr4name[name_key].id if name_key in rr4name else create_stub(course, item_type, item_name).id
+                        name_key = item_type + item_name
+                        item_dict["content_id"] = rr4name[name_key].id if name_key in rr4name else create_stub(course,
+                                                                                                               item_type,
+                                                                                                               item_name).id
                     elif item_type == "Page":
                         url = page_name_to_url(item_name)
                         create_page(course, item_name)
@@ -101,11 +115,12 @@ def upload_modules(course, source, dryrun):
 
 
 def page_name_to_url(item_name):
-    return item_name.lower().replace(" ", "-")
+    return item_name.lower().replace(" ", "-").replace(":", "").replace("--", '-')
 
 
 def extract_options(options):
-    return {s[0].strip().lower(): s[1].strip() if len(s) > 1 else "" for s in [o.split('=', 2) for o in options.split(';')]}
+    return {s[0].strip().lower(): s[1].strip() if len(s) > 1 else "" for s in
+            [o.split('=', 2) for o in options.split(';')]}
 
 
 def upload_discussions(course, target, dryrun):
@@ -116,13 +131,54 @@ def upload_assignments(course, target, dryrun):
     pass
 
 
-def upload_pages(course, target, dryrun):
-    pass
+PAGE_KEYWORDS = set(["title", "published", "publish_at", "front_page"])
+
+
+def upload_pages(course, source, dryrun, force):
+    # got to watch out for windows \\ when using join!
+    to_upload = set(
+        [os.path.join(d, f)[len(source) + 1:].replace("\\", "/") for (d, sds, fs) in os.walk(source) for f in fs])
+    for file in to_upload:
+        with open(os.path.join(source, file), "r") as fd:
+            page = fd.read()
+        dict = {}
+        while True:
+            (line, _, page) = page.partition('\n')
+            (key, _, value) = line.partition(':')
+            if key not in PAGE_KEYWORDS:
+                warn(f"found unknown keyword {key} in {file}. ignoring")
+            else:
+                dict[key] = value.strip()
+            if key == 'title':
+                break
+        dict['body'] = md2htmlstr(page)
+        rrkey = "Page" + dict['title']
+        exists = rrkey in rr4name
+        if exists:
+            info(f"page {dict['title']} already exists")
+        do_upload = not exists if not force else True
+        if do_upload:
+            if exists:
+                if dryrun:
+                    info(f"would update {dict['title']} from {file}")
+                else:
+                    info(f"updating {dict['title']} from {file}")
+                    dict['title'] = dict['title'] + "blah"
+                    p: Page = course.get_page(rr4name[rrkey].url)
+                    rc = p.edit(**dict)
+            else:
+                if dryrun:
+                    info(f"would create {dict['title']} from {file}")
+                else:
+                    info(f"creating {dict['title']} from {file}")
+                    rc = course.create_page(dict)
+                    process_resource_record(ResourceRecord(rc.page_id, rc.url, "Page", rc.title, False))
 
 
 def upload_files(course, target, dryrun):
     # got to watch out for windows \\ when using join!
-    to_upload = set([os.path.join(d, f)[len(target) + 1:].replace("\\", "/") for (d, sds, fs) in os.walk(target) for f in fs])
+    to_upload = set(
+        [os.path.join(d, f)[len(target) + 1:].replace("\\", "/") for (d, sds, fs) in os.walk(target) for f in fs])
 
     existing_files = set()
     for folder in course.get_folders():
@@ -161,7 +217,7 @@ def upload_announcements(course, target, dryrun):
               help=f"upload discussions to the {click.style('discussions', underline=True, italic=True)} subdirectory.")
 @click.option('--assignments', default=False, show_default=True,
               help=f"upload assignments to the {click.style('assignments', underline=True, italic=True)} subdirectory.")
-@click.option('--pages', default=False, show_default=True,
+@click.option('--pages/--no-pages', default=False, show_default=True,
               help=f"upload pages to the {click.style('pages', underline=True, italic=True)} subdirectory.")
 @click.option('--files', default=False, show_default=True,
               help=f"upload files to the {click.style('files', underline=True, italic=True)} subdirectory.")
@@ -170,8 +226,9 @@ def upload_announcements(course, target, dryrun):
 @click.option('--all/--no-all', default=False, show_default=True,
               help="upload all content to corresponding directories")
 @click.option("--source", default='.', show_default=True, help="upload content parent directory.")
+@click.option("--force/--no-force", default=False, show_default=True, help="overwrite existing content")
 def upload_course_content(course_name, dryrun, modules, discussions, assignments, pages, files, announcements, all,
-                          source):
+                          source, force):
     """upload course content from local files"""
     canvas = get_canvas_object()
     course = get_course(canvas, course_name, is_active=False)
@@ -192,7 +249,7 @@ def upload_course_content(course_name, dryrun, modules, discussions, assignments
     if assignments:
         upload_assignments(course, os.path.join(source, 'assignments'), dryrun)
     if pages:
-        upload_pages(course, os.path.join(source, 'pages'), dryrun)
+        upload_pages(course, os.path.join(source, 'pages'), dryrun, force)
     if files:
         upload_files(course, os.path.join(source, 'files'), dryrun)
     if announcements:

@@ -1,7 +1,7 @@
-import os
-
+from commands.upload_canvas_course import page_name_to_url
 from core import *
 from md2fhtml import *
+
 
 def download_modules(course, target, dryrun):
     def base_inner_module_to_str(module_item):
@@ -80,12 +80,33 @@ def download_discussions(course, target, dryrun):
                     # todo: we need to fix up the links based on the rr maps
                     fd.write(html2mdstr(discussion.message))
 
+
 def download_assignments(course, target, dryrun):
     pass
 
 
+def fix_links(text):
+    # that funky ( [^\)]*) shouldn't be needed, but i do see trailing names after the URL
+    return re.sub(r"\(https://\w+.instructure.com/courses/\w+/pages/([^ )]+)( [^\)]*)\)", r"(\1)", text)
+
+
 def download_pages(course, target, dryrun):
-    pass
+    os.makedirs(target, exist_ok=True)
+    for page in course.get_pages(include=["body"]):
+        url = page_name_to_url(page.title)
+        if page.url != url:
+            warn(f"calculated page url for {page.title} ({url}) does not equal {page.url}")
+        if dryrun:
+            info(f"would download {page.title} to {url}")
+        else:
+            with open(os.path.join(target, url) + ".md", "w+") as fd:
+                fd.write(f"published: {page.published}\n")
+                if page.publish_at:
+                    fd.write(f"publish_at: {page.publish_at}\n")
+                if page.front_page:
+                    fd.write(f"front_page: {page.front_page}\n")
+                fd.write(f"title: {page.title}\n")
+                fd.write(fix_links(html2mdstr(page.body)))
 
 
 def download_files(course, target, dryrun):
@@ -141,7 +162,7 @@ def download_announcements(course, target, dryrun):
               help=f"download discussions to the {click.style('discussions', underline=True, italic=True)} subdirectory.")
 @click.option('--assignments', default=False, show_default=True,
               help=f"download assignments to the {click.style('assignments', underline=True, italic=True)} subdirectory.")
-@click.option('--pages', default=False, show_default=True,
+@click.option('--pages/--no-pages', default=False, show_default=True,
               help=f"download pages to the {click.style('pages', underline=True, italic=True)} subdirectory.")
 @click.option('--files', default=False, show_default=True,
               help=f"download files to the {click.style('files', underline=True, italic=True)} subdirectory.")
