@@ -20,7 +20,7 @@ def create_discussion(course, name, message=""):
     return rc
 
 
-def create_file(course, name, content=b''):
+def create_file(course, name, content=b' '):
     last_slash = name.rindex("/")
     file = name[last_slash + 1:]
     parent = name[0:last_slash] if last_slash != -1 else ""
@@ -66,7 +66,8 @@ def upload_modules(course, source, dryrun):
                 title = parts[0]
                 if title in course_modules:
                     last_module_seen = course_modules[title]
-                    last_module_item_names = set([mi.title for mi in course_modules[title].get_module_items()])
+                    last_module_item_names = set(
+                        [f"{mi.type}; {mi.title}" for mi in course_modules[title].get_module_items()])
                     info(f"{title} module already present")
                 elif dryrun:
                     info(f"would create {title} module")
@@ -85,8 +86,9 @@ def upload_modules(course, source, dryrun):
                 item_parts = m.group(5).split(';', 1)
                 item_options = extract_options(item_parts[1]) if len(item_parts) > 1 else {}
                 item_type = item_parts[0].strip()
-                if item_title in last_module_item_names:
-                    info(f"item {item_title} present in {title}")
+                item_key = f"{item_type}; {item_title}"
+                if item_key in last_module_item_names:
+                    info(f"item {item_key} present in {title}")
                 elif dryrun:
                     info(f"would create item {item_title} in {title}")
                 else:
@@ -111,7 +113,7 @@ def upload_modules(course, source, dryrun):
                         error("ExternalTool creation not currently supported")
                     else:
                         last_module_seen.create_module_item(item_dict)
-                        last_module_item_names.add(item_title)
+                        last_module_item_names.add(item_key)
 
 
 def page_name_to_url(item_name):
@@ -123,8 +125,48 @@ def extract_options(options):
             [o.split('=', 2) for o in options.split(';')]}
 
 
-def upload_discussions(course, target, dryrun):
-    pass
+DISCUSSION_KEYWORDS = set(["title", "published", "publish_at"])
+
+
+def upload_discussions(course, source, dryrun, force):
+    to_upload = set(
+        [os.path.join(d, f)[len(source) + 1:].replace("\\", "/") for (d, sds, fs) in os.walk(source) for f in fs])
+    for file in to_upload:
+        with open(os.path.join(source, file), "r") as fd:
+            page = fd.read()
+        dict = {}
+        while True:
+            (line, _, page) = page.partition('\n')
+            (key, _, value) = line.partition(':')
+            if key not in PAGE_KEYWORDS:
+                warn(f"found unknown keyword {key} in {file}. ignoring")
+            else:
+                dict[key] = value.strip()
+            if key == 'title':
+                break
+        dict['message'] = md2htmlstr(page)
+        dict['discussion_type'] = 'threaded'
+        rrkey = "Discussion" + dict['title']
+        exists = rrkey in rr4name
+        if exists:
+            info(f"discussion {dict['title']} already exists")
+        do_upload = not exists if not force else True
+        if do_upload:
+            if exists:
+                if dryrun:
+                    info(f"would update {dict['title']} from {file}")
+                else:
+                    info(f"updating {dict['title']} from {file}")
+                    dict['title'] = dict['title'] + "blah"
+                    dt = course.get_discussion_topic(rr4name[rrkey].id)
+                    rc = dt.update(**dict)
+            else:
+                if dryrun:
+                    info(f"would create {dict['title']} from {file}")
+                else:
+                    info(f"creating {dict['title']} from {file}")
+                    rc = course.create_discussion_topic(**dict)
+                    process_resource_record(ResourceRecord(rc.id, base_url(rc.html_url), "Discussion", rc.title, False))
 
 
 def upload_assignments(course, target, dryrun):
@@ -213,13 +255,13 @@ def upload_announcements(course, target, dryrun):
 @click.option('--dryrun/--no-dryrun', default=True, show_default=True, help="show what would happen, but don't do it.")
 @click.option('--modules/--no-modules', default=False, show_default=True,
               help=f"upload modules to the {click.style('modules', underline=True, italic=True)} subdirectory.")
-@click.option('--discussions', default=False, show_default=True,
+@click.option('--discussions/--no-discussions', default=False, show_default=True,
               help=f"upload discussions to the {click.style('discussions', underline=True, italic=True)} subdirectory.")
 @click.option('--assignments', default=False, show_default=True,
               help=f"upload assignments to the {click.style('assignments', underline=True, italic=True)} subdirectory.")
 @click.option('--pages/--no-pages', default=False, show_default=True,
               help=f"upload pages to the {click.style('pages', underline=True, italic=True)} subdirectory.")
-@click.option('--files', default=False, show_default=True,
+@click.option('--files/--no-files', default=False, show_default=True,
               help=f"upload files to the {click.style('files', underline=True, italic=True)} subdirectory.")
 @click.option('--announcements', default=False, show_default=True,
               help=f"upload announcements to the {click.style('announcements', underline=True, italic=True)} subdirectory.")
@@ -242,10 +284,8 @@ def upload_course_content(course_name, dryrun, modules, discussions, assignments
         error("nothing selected to upload")
         exit(1)
 
-    if modules:
-        upload_modules(course, os.path.join(source, 'modules'), dryrun)
     if discussions:
-        upload_discussions(course, os.path.join(source, 'discussions'), dryrun)
+        upload_discussions(course, os.path.join(source, 'discussions'), dryrun, force)
     if assignments:
         upload_assignments(course, os.path.join(source, 'assignments'), dryrun)
     if pages:
@@ -254,3 +294,5 @@ def upload_course_content(course_name, dryrun, modules, discussions, assignments
         upload_files(course, os.path.join(source, 'files'), dryrun)
     if announcements:
         upload_announcements(course, os.path.join(source, 'announcements'), dryrun)
+    if modules:
+        upload_modules(course, os.path.join(source, 'modules'), dryrun)
