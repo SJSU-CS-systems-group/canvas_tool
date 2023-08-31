@@ -1,5 +1,6 @@
-import canvas_tool
+import core
+from commands import *
 
 
 if __name__ == "__main__":
-    canvas_tool.canvas_tool()
+    core.canvas_tool()

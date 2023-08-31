@@ -1,4 +1,5 @@
 from core import *
+import glob
 
 @canvas_tool.command()
 @click.argument('course_name', metavar='course')
@@ -6,7 +7,8 @@ from core import *
 @click.argument('language', metavar='language')
 @click.option('--dryrun/--no-dryrun', default=True, show_default=True,
               help="only show the grade, don't actually set it")
-def code_similarity(course_name, language, assignment_name, dryrun):
+@click.option('--pause/--no-pause', default=False, show_default=True, help="pause before uploading")
+def code_similarity(course_name, language, assignment_name, dryrun, pause):
     '''
     check submissions for code similarity using stanford MOSS.
     '''
@@ -34,7 +36,13 @@ def code_similarity(course_name, language, assignment_name, dryrun):
                     if aname.endswith(".zip"):
                         with zipfile.ZipFile(aname, "r") as zf:
                             zf.extractall(udir)
-        moss.addFilesByWildcard(f"{tempdir}/**/*.{language}")
+        files_to_upload = [x for x in glob.glob(f"{tempdir}/**/*.{language}") if '/__MACOSX/' not in x]
+        info(f"uploading {files_to_upload}")
+
+        if pause:
+            input(f"pausing. code is in {tempdir}. hit enter to continue")
+        for file in files_to_upload:
+            moss.addFile(file)
         count = len(moss.files)
         with click.progressbar(length=count, label="uploading", item_show_func=lambda x: x) as bar:
             moss_url = moss.send(on_send=lambda fp, dn: bar.update(1, dn))
