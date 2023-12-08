@@ -61,3 +61,4 @@ def code_similarity(course_name, language, assignment_name, dryrun, pause, multi
             with click.progressbar(length=count, label="uploading", item_show_func=lambda x: x) as bar:
                 moss_url = moss.send(on_send=lambda fp, dn: bar.update(1, dn))
             info(f"results at {moss_url}")
+            info(f"download with: wget -k -e robots=off -np -r {moss_url}")

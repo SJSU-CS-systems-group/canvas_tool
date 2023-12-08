@@ -166,10 +166,17 @@ def get_assignment(course, title):
             error(f"    {a['title']}")
         sys.exit(2)
     if len(filtered_assignments) > 1:
-        error(f'multiple assignments found matching {title}:')
-        for a in filtered_assignments:
-            error(f"    {a['title']}")
-        sys.exit(2)
+        # sometimes there are prefix matches for an assignment name that is
+        # fully given: "Assignment 1" and "Assignment 1 Extended"
+        # if there are multiple matches but one exact match, use the exact match
+        exact_match = [a for a in filtered_assignments if title == a['title']]
+        if len(exact_match) == 1:
+            filtered_assignments = exact_match
+        else:
+            error(f'multiple assignments found matching {title}:')
+            for a in filtered_assignments:
+                error(f"    {a['title']}")
+            sys.exit(2)
     return course.get_assignment(filtered_assignments[0]['assignment_id'])
 
 
