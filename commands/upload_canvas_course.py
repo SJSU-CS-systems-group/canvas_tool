@@ -100,6 +100,7 @@ def upload_modules(course, source, dryrun):
                     if item_type in ["Assignment", "Discussion", "File", "Quiz"]:
                         item_name = item_options["target"] if "target" in item_options else item_title
                         name_key = item_type + item_name
+                        error(f"LOOKING FOR {name_key} in {rr4name}")
                         item_dict["content_id"] = rr4name[name_key].id if name_key in rr4name else create_stub(course,
                                                                                                                item_type,
                                                                                                                item_name).id

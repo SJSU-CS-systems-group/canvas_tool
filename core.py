@@ -283,8 +283,8 @@ def map_course_resource_records(course):
             course_modules[mod.name] = mod
         bar.update(1)
 
-letter_grades = [(98, "A+"), (92, "A"), (90, "A-"), (88, "B+"), (82, "B"), (80, "B-"), (78, "C+"), (72, "C"),
-                 (70, "C-"), (68, "D+"), (62, "D"), (60, "D-"), (0, "F")]
+letter_grades = [(96, "A+"), (93, "A"), (90, "A-"), (86, "B+"), (83, "B"), (80, "B-"), (76, "C+"), (73, "C"),
+                 (70, "C-"), (66, "D+"), (63, "D"), (60, "D-"), (0, "F")]
 
 def to_letter_grade(score):
     if score > 89:

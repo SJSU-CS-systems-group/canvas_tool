@@ -4,7 +4,8 @@ from core import *
 @click.argument("course")
 @click.option("--round", default=0.0, help="points to add to the final score before calculating the letter grade.")
 @click.option("--dryrun/--no-dryrun", default=True)
-def set_letter_grade(course, round, dryrun):
+@click.option("--skip-mismatch/--no-skip-mismatch", default=True, help="do not set letter grade for current grades that don't match total")
+def set_letter_grade(course, round, dryrun, skip_mismatch):
     ''' calculate the letter grade based on the final score in the class.
 
     the "Reported Letter Grade" assignment must be created in the gradebook as a letter grade assignment
@@ -27,8 +28,12 @@ def set_letter_grade(course, round, dryrun):
             current_score = enrollment.grades['current_score']
             final_score = enrollment.grades['final_score']
             if current_score != final_score:
-                warn(f"current_score of {current_score} != {final_score} for {enrollment.user['name']} SKIPPING")
-                continue
+                mess = f"current_score of {current_score} != {final_score} for {enrollment.user['name']} "
+                if skip_mismatch:
+                    warn(mess + "SKIPPED")
+                    continue
+                else:
+                    warn(mess + "NOT SKIPPED")
             letter = points_to_letter(enrollment.grades['final_score'], round)
             user_to_grade[enrollment.user['id']] = (enrollment.user, letter, enrollment.grades['final_score'])
 
