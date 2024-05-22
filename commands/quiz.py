@@ -26,18 +26,45 @@ def strip_tags(html):
 def dehtml(s):
     if type(s) is not str:
         return s
-    return strip_tags(s.replace("&nbsp;", ""))
+    return strip_tags(s.replace("&nbsp;", "").strip().replace("\n", " ").replace("\r",""))
+
+
+def evolves(base, change):
+    if type(base) is not str or type(change) is not str:
+        return True
+    base_words = set(base.split())
+    change_words = set(change.split())
+    added = change_words - base_words
+    removed = base_words - change_words
+    rc = True
+    if len(added) == 0:
+        rc = False
+    if len(added) == 1 and len(removed) >= 1:
+        a = added.pop()
+        for r in removed:
+            if r.startswith(a):
+                rc = False
+                break
+    return rc
+
+
+def get_question_group(quiz, question_groups, group_id):
+    if group_id not in question_groups:
+        question_groups[group_id] = quiz.get_quiz_group(group_id)
+    return question_groups[group_id]
 
 
 @canvas_tool.command()
 @click.argument('course_name', metavar='course')
 @click.argument('quiz_name', metavar='quiz', default='')
-@click.option('--show-question/--no-show-question', default=False)
+@click.option('--show-question/--no-show-question', default=False, show_default=True)
 @click.option('--for-student', metavar='students', default=[], multiple=True,
               help='students to get quiz logs for')
 @click.option('--summarize/--no-summarize', default=True, show_default=True,
               help='show only completed answers. skip answers that are a prefix of subsequent answers')
-def quiz(course_name, quiz_name, show_question, for_student, summarize):
+@click.option('--final-answer/--no-final-answer', default=True, show_default=True,
+              help='show the final answer, if --no-final-answer, the final answers will be skipped')
+def quiz(course_name, quiz_name, show_question, for_student, summarize, final_answer):
     '''
     get quiz logs for a student
     '''
@@ -67,11 +94,13 @@ def quiz(course_name, quiz_name, show_question, for_student, summarize):
     answers = []
 
     questions = {q.id: q for q in quiz.get_questions()}
+    question_groups = {}
     for s in quiz.get_submissions():
         if s.user_id not in users:
             continue
         prev = None
         for es in s.get_submission_events():
+            time_spent = int(s.time_spent)
             if es.event_type != 'question_answered':
                 continue
             event_data = es.event_data
@@ -80,19 +109,32 @@ def quiz(course_name, quiz_name, show_question, for_student, summarize):
             for e in event_data:
                 if e['answer']:
                     question = questions[int(e['quiz_question_id'])]
-                    data = (users[s.user_id], question.position, es.created_at, dehtml(e['answer']), question.question_text)
+                    if question.quiz_group_id:
+                        position = f"{get_question_group(quiz, question_groups, question.quiz_group_id).position:2}.{question.position:2}"
+                    else:
+                        position = f"{question.position:5}"
+                    data = (users[s.user_id], position, f"{time_spent//60:02}:{time_spent%60:02}", dehtml(e['answer']), question.question_text)
                     answers.append(data)
 
-    if summarize:
+    if summarize or final_answer:
         answers.sort(reverse=True)
         prev=None
         new_answers = []
+        final_answers = {}
         for a in answers:
-            if prev == None or prev[0] != a[0] or prev[1] != a[1] or type(a[3]) is not str or type(prev[3]) is not str or not prev[3].startswith(a[3]):
+            skip_answer = False
+            if summarize and prev != None and prev[0] == a[0] and prev[1] == a[1] and not evolves(prev[3], a[3]):
+                skip_answer = True
+            if final_answer and not skip_answer:
+                final_key = (a[0], a[1])
+                if final_key not in final_answers:
+                    final_answers[final_key] = a
+                    skip_answer = True
+            if not skip_answer:
                 new_answers.append(a)
             prev = a
         answers = new_answers
 
     answers.sort(key=lambda x: x[2])
     for a in answers:
-        print(f"{a[2]} {a[1]} {a[0]} {a[3]} {a[4] if show_question else ''}")
+        print(f"{a[1]} {a[2]} {a[0]} {a[3]} {a[4] if show_question else ''}")
